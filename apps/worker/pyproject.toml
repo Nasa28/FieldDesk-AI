@@ -1,0 +1,37 @@
+[project]
+name = "fielddesk-worker"
+version = "0.0.1"
+description = "FieldDesk AI background worker for transcription, extraction, embeddings, and RAG."
+requires-python = ">=3.11"
+dependencies = [
+    "psycopg[binary]>=3.2",
+    "psycopg-pool>=3.2",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.4",
+    "httpx>=0.27",
+    "tenacity>=9.0",
+    "structlog>=24.4",
+    "numpy>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[project.scripts]
+fielddesk-worker = "fielddesk_worker.main:run"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["fielddesk_worker*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

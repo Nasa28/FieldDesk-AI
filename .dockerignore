@@ -1,0 +1,37 @@
+.git
+.gitignore
+.env
+.env.local
+.env.*.local
+
+# Node
+**/node_modules
+**/.next
+**/out
+
+# Python
+**/.venv
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/.mypy_cache
+**/.ruff_cache
+**/.pytest_cache
+**/*.egg-info
+
+# Go
+apps/api/bin
+apps/api/tmp
+
+# Editors / OS
+.vscode
+.idea
+.DS_Store
+
+# Docker volumes (just in case)
+postgres_data
+minio_data
+
+# Docs are not needed in images
+docs
+README.md

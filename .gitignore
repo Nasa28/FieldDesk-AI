@@ -1,0 +1,33 @@
+# Env
+.env
+.env.local
+.env.*.local
+
+# Go
+apps/api/bin/
+apps/api/tmp/
+apps/api/internal/database/db/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+*.egg-info/
+
+# Node / Next
+node_modules/
+.next/
+out/
+
+# Editors
+.vscode/
+.idea/
+.DS_Store
+
+# Docker volumes
+postgres_data/
+minio_data/
