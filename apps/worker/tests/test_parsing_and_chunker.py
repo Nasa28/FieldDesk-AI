@@ -150,6 +150,30 @@ class ChunkerTests(unittest.TestCase):
             chunk_segments([ParsedSegment(text="x")], target_tokens=10, overlap_tokens=10)
 
 
+class PdfParserTests(unittest.TestCase):
+    def test_scanned_pdf_with_no_extractable_text_raises(self):
+        # A PDF with pages but no text content (the shape of a scanned doc
+        # before OCR) must land as ParseError, not as a silently-empty
+        # 'ready' document. OCR is explicitly out of scope for v1.
+        try:
+            from pypdf import PdfWriter
+        except ModuleNotFoundError:
+            self.skipTest("pypdf not installed")
+        from fielddesk_worker.parsing import ParseError
+        from fielddesk_worker.parsing.pdf import parse_pdf
+        import io as _io
+
+        writer = PdfWriter()
+        writer.add_blank_page(width=612, height=792)
+        writer.add_blank_page(width=612, height=792)
+        buf = _io.BytesIO()
+        writer.write(buf)
+
+        with self.assertRaises(ParseError) as ctx:
+            parse_pdf(buf.getvalue())
+        self.assertIn("scanned", str(ctx.exception).lower())
+
+
 class ParseDocumentRouterTests(unittest.TestCase):
     def test_supported_mime_types_match_what_router_knows(self):
         # If this set changes, the Go handler's allowedDocumentMimes needs
