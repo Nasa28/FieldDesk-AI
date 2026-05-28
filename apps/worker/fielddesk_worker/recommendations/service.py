@@ -224,6 +224,7 @@ def synthesize(job: dict[str, Any], cur) -> dict[str, Any]:
         log_model_call_isolated(
             tenant_id=tenant_id,
             job_id=job.get("id"),
+            ticket_id=str(ticket_id),
             kind="llm",
             provider=_expected_provider_name(),
             model=_expected_model_name(),
@@ -298,6 +299,7 @@ def synthesize(job: dict[str, Any], cur) -> dict[str, Any]:
         cur,
         tenant_id=tenant_id,
         job_id=job.get("id"),
+        ticket_id=str(ticket_id),
         kind="llm",
         provider=metrics.provider,
         model=metrics.model,

@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/fielddesk-ai/api/internal/database"
@@ -228,6 +229,67 @@ func (h *Handlers) ListModelLogs(w http.ResponseWriter, r *http.Request) {
 		"count":       len(items),
 		"next_cursor": nextCursor(items),
 	})
+}
+
+// CostsByTicket returns the top-N most expensive tickets in the window
+// plus the tenant-wide avg cost per attributed ticket. Pairs the per-
+// ticket aggregate (the long-tail-skewing top-N) with the average (the
+// dashboard headline) so the UI can render both from one round-trip.
+func (h *Handlers) CostsByTicket(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := middleware.TenantFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing_tenant", "tenant context missing")
+		return
+	}
+	window, err := parseWindow(r.URL.Query())
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_time_range", "from/to must be RFC3339 and span <= 366 days")
+		return
+	}
+	limit := parseTopNLimit(r.URL.Query().Get("limit"))
+
+	top, err := database.MostExpensiveTickets(r.Context(), h.db, tenantID, window, limit)
+	if err != nil {
+		h.logger.Error("costs_by_ticket_top_failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "rollup_failed", "could not compute per-ticket cost")
+		return
+	}
+	summary, err := database.CostPerTicketSummaryForTenant(r.Context(), h.db, tenantID, window)
+	if err != nil {
+		h.logger.Error("costs_by_ticket_summary_failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "rollup_failed", "could not compute avg cost per ticket")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"window":                  windowResponse(window),
+		"ticket_count":            summary.TicketCount,
+		"avg_cost_per_ticket_usd": summary.AvgCostPerTicketUSD,
+		"top_tickets":             top,
+	})
+}
+
+const (
+	defaultTopNLimit = 10
+	maxTopNLimit     = 100
+)
+
+// parseTopNLimit clamps the ?limit= param to a small safe range. We don't
+// 400 on bad input here — an unparseable string just falls back to the
+// default, since the endpoint is operator-facing and the only thing that
+// could break is "the user typoed the URL bar."
+func parseTopNLimit(raw string) int {
+	if raw == "" {
+		return defaultTopNLimit
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return defaultTopNLimit
+	}
+	if n > maxTopNLimit {
+		return maxTopNLimit
+	}
+	return n
 }
 
 func windowResponse(w database.TimeWindow) map[string]any {

@@ -131,3 +131,24 @@ func TestParseCursorRejectsGarbage(t *testing.T) {
 		t.Fatal("expected error on garbage cursor")
 	}
 }
+
+func TestParseTopNLimitDefaultsAndClamps(t *testing.T) {
+	cases := []struct {
+		in   string
+		want int
+	}{
+		{"", defaultTopNLimit},    // empty → default
+		{"abc", defaultTopNLimit}, // garbage → default (don't 400 operator URLs)
+		{"-5", defaultTopNLimit},  // negative → default
+		{"0", defaultTopNLimit},   // zero → default
+		{"7", 7},                  // reasonable → as-is
+		{"100", 100},              // at the cap → as-is
+		{"500", maxTopNLimit},     // over the cap → clamped
+		{"99999", maxTopNLimit},   // way over → clamped, not overflowed
+	}
+	for _, c := range cases {
+		if got := parseTopNLimit(c.in); got != c.want {
+			t.Errorf("parseTopNLimit(%q) = %d, want %d", c.in, got, c.want)
+		}
+	}
+}

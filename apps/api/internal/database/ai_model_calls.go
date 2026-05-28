@@ -332,6 +332,122 @@ func ListModelCalls(ctx context.Context, db *DB, p ListModelCallsParams) ([]Mode
 	return out, rows.Err()
 }
 
+// CostByTicketRow is one row of the "most expensive tickets" view.
+// IssueSummary and CustomerName are nullable on job_tickets, so they ride
+// as pointers; the worker leaves them blank when extraction is partial.
+type CostByTicketRow struct {
+	TicketID      uuid.UUID `json:"ticket_id"`
+	IssueSummary  *string   `json:"issue_summary,omitempty"`
+	CustomerName  *string   `json:"customer_name,omitempty"`
+	Status        string    `json:"status"`
+	TotalCostUSD  float64   `json:"total_cost_usd"`
+	FailedCostUSD float64   `json:"failed_cost_usd"`
+	CallCount     int64     `json:"call_count"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+const mostExpensiveTicketsSQL = `
+	SELECT
+		jt.id,
+		jt.issue_summary,
+		jt.customer_name,
+		jt.status,
+		COALESCE(SUM(amc.cost_usd),                            0)::numeric(14,6),
+		COALESCE(SUM(amc.cost_usd) FILTER (WHERE NOT amc.success), 0)::numeric(14,6),
+		COUNT(*)::bigint,
+		jt.created_at
+	FROM ai_model_calls amc
+	JOIN job_tickets jt
+	       ON jt.id = amc.ticket_id
+	      AND jt.tenant_id = amc.tenant_id
+	WHERE amc.tenant_id = $1
+	  AND amc.created_at >= $2
+	  AND amc.created_at <  $3
+	GROUP BY jt.id, jt.issue_summary, jt.customer_name, jt.status, jt.created_at
+	ORDER BY SUM(amc.cost_usd) DESC NULLS LAST
+	LIMIT $4
+`
+
+// MostExpensiveTickets returns the top-N tickets by total cost in the
+// window. Only counts ai_model_calls rows whose ticket_id is set —
+// transcription calls that pre-date back-stamping or never produced a
+// ticket are excluded. The join with job_tickets is INNER because we
+// only ever surface tickets that still exist (ON DELETE SET NULL on the
+// FK means a deleted ticket's calls become orphans, which would otherwise
+// show up as a NULL ticket_id row).
+func MostExpensiveTickets(
+	ctx context.Context, db *DB, tenantID uuid.UUID, w TimeWindow, limit int,
+) ([]CostByTicketRow, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	rows, err := db.Query(ctx, mostExpensiveTicketsSQL, tenantID, w.Start, w.End, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]CostByTicketRow, 0)
+	for rows.Next() {
+		var r CostByTicketRow
+		var total, failed pgtype.Numeric
+		if err := rows.Scan(
+			&r.TicketID, &r.IssueSummary, &r.CustomerName, &r.Status,
+			&total, &failed, &r.CallCount, &r.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		r.TotalCostUSD = numericToFloat(total)
+		r.FailedCostUSD = numericToFloat(failed)
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// CostPerTicketSummary is the headline aggregate that pairs with the
+// top-N list: "across all attributed tickets in the window, here's the
+// average and the total ticket count."
+type CostPerTicketSummary struct {
+	TicketCount         int64   `json:"ticket_count"`
+	AvgCostPerTicketUSD float64 `json:"avg_cost_per_ticket_usd"`
+}
+
+const costPerTicketSummarySQL = `
+	WITH per_ticket AS (
+		SELECT amc.ticket_id, SUM(amc.cost_usd) AS total
+		FROM ai_model_calls amc
+		WHERE amc.tenant_id = $1
+		  AND amc.created_at >= $2
+		  AND amc.created_at <  $3
+		  AND amc.ticket_id IS NOT NULL
+		GROUP BY amc.ticket_id
+	)
+	SELECT
+		COUNT(*)::bigint,
+		COALESCE(AVG(total), 0)::numeric(14,6)
+	FROM per_ticket
+`
+
+// CostPerTicketSummaryForTenant computes the per-tenant average cost for
+// tickets that had at least one attributed model call in the window.
+// Tickets with zero attributed cost (e.g. created before the window
+// closed, or whose calls were all back-stamp-orphaned) don't dilute the
+// average — they're not in the GROUP. The Postgres divide-by-zero guard
+// short-circuits when no tickets are present.
+func CostPerTicketSummaryForTenant(
+	ctx context.Context, db *DB, tenantID uuid.UUID, w TimeWindow,
+) (CostPerTicketSummary, error) {
+	var s CostPerTicketSummary
+	var avg pgtype.Numeric
+	if err := db.QueryRow(ctx, costPerTicketSummarySQL, tenantID, w.Start, w.End).Scan(&s.TicketCount, &avg); err != nil {
+		return CostPerTicketSummary{}, err
+	}
+	s.AvgCostPerTicketUSD = numericToFloat(avg)
+	return s, nil
+}
+
 // numericToFloat converts a pgtype.Numeric to float64 for JSON output.
 // Cost values fit comfortably in float64; the underlying column is NUMERIC(12,6).
 func numericToFloat(n pgtype.Numeric) float64 {

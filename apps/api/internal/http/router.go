@@ -101,6 +101,7 @@ func NewRouter(cfg *config.Config, db *database.DB, logger *slog.Logger, store s
 			r.Route("/admin", func(r chi.Router) {
 				r.Get("/metrics", h.AdminMetrics)
 				r.Get("/costs", h.Costs)
+				r.Get("/costs/by-ticket", h.CostsByTicket)
 				r.Get("/failures", h.AdminFailures)
 				r.Get("/budgets", h.GetBudgets)
 				r.Put("/budgets", h.PutBudgets)

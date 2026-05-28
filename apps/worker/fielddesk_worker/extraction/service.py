@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from fielddesk_worker.config import load_settings
 from fielddesk_worker.db_queries import (
+    backstamp_model_call_ticket_id,
     enqueue_job,
     get_transcript,
     insert_ai_extraction,
@@ -203,6 +204,18 @@ def extract(job: dict[str, Any], cur) -> dict[str, Any]:
             extraction_id=extraction_id,
             tenant_id=tenant_id,
             job_ticket_id=job_ticket_id,
+        )
+        # Back-stamp every prior model call for this voice note (the
+        # transcription call, this extraction's own call, and any earlier
+        # failed-extraction retries) so cost-per-ticket aggregations don't
+        # have to walk request_meta JSONB. Same transaction as the ticket
+        # creation: if anything below rolls back, the attribution rolls back
+        # with it.
+        backstamp_model_call_ticket_id(
+            cur,
+            tenant_id=tenant_id,
+            voice_note_id=voice_note_id,
+            ticket_id=job_ticket_id,
         )
         # Auto-enqueue a RAG retrieval so the ticket page can show "Related
         # documents" without a second human action. Idempotency key includes

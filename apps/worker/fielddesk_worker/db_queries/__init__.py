@@ -4,6 +4,7 @@ from fielddesk_worker.db_queries.ai_extractions import (
 )
 from fielddesk_worker.db_queries.ai_jobs import enqueue_job
 from fielddesk_worker.db_queries.ai_model_calls import (
+    backstamp_model_call_ticket_id,
     insert_model_call,
     log_model_call_isolated,
 )
@@ -33,6 +34,7 @@ from fielddesk_worker.db_queries.voice_notes import (
 
 __all__ = [
     "BudgetUsage",
+    "backstamp_model_call_ticket_id",
     "delete_existing_chunks",
     "enqueue_job",
     "get_document_for_update",
