@@ -47,7 +47,10 @@ func NewRouter(cfg *config.Config, db *database.DB, logger *slog.Logger, store s
 		})
 
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.RequireTenant(db))
+			r.Use(middleware.RequireTenant(
+				middleware.DatabaseAuthLookup{DB: db},
+				cfg.AllowTenantHeaderAuth,
+			))
 
 			r.Route("/voice-notes", func(r chi.Router) {
 				r.Get("/", h.ListVoiceNotes)

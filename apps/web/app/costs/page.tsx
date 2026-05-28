@@ -240,8 +240,8 @@ function NoTenant() {
     <div>
       <h1 className="page-title">Costs</h1>
       <p className="page-subtitle">
-        Set a tenant ID first. Real auth is not wired yet; the dashboard
-        currently uses an <code>X-Tenant-ID</code> header.
+        Your session does not have a tenant associated with it yet. Sign
+        out and back in to refresh.
       </p>
       <div className="card">
         <Link href="/settings">Open Settings →</Link>

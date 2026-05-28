@@ -28,6 +28,13 @@ type Config struct {
 	AIJobMaxAttempts  int32
 
 	AIWorkerURL string
+
+	// AllowTenantHeaderAuth controls whether RequireTenant accepts an
+	// X-Tenant-ID header as a fallback when no bearer token is present.
+	// Off by default so a misconfigured production deploy can't silently
+	// trust any caller who sets the header; flip to true in local dev so
+	// seed scripts and curl keep working without a login flow.
+	AllowTenantHeaderAuth bool
 }
 
 func Load() (*Config, error) {
@@ -49,6 +56,8 @@ func Load() (*Config, error) {
 		PresignTTL:        time.Duration(getenvInt64("PRESIGN_TTL_SECONDS", 900)) * time.Second,
 		AIJobMaxAttempts:  int32(getenvInt64("AI_JOB_MAX_ATTEMPTS", getenvInt64("WORKER_MAX_RETRIES", 5))),
 		AIWorkerURL:       os.Getenv("AI_WORKER_URL"),
+
+		AllowTenantHeaderAuth: getenvBool("ALLOW_TENANT_HEADER_AUTH", false),
 	}
 
 	if cfg.DatabaseURL == "" {
