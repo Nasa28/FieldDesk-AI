@@ -13,7 +13,7 @@ from fielddesk_worker.db_queries import (
     update_voice_note_status,
 )
 from fielddesk_worker.providers.base import TranscriptionProvider
-from fielddesk_worker.storage import get_object_bytes, object_exists
+from fielddesk_worker.storage import ObjectInfo, get_object_bytes, stat_object
 
 
 def _make_provider() -> TranscriptionProvider:
@@ -49,6 +49,45 @@ def _expected_model_name() -> str:
     return s.transcription_model
 
 
+def _normalize_content_type(value: str | None) -> str:
+    return (value or "").split(";", 1)[0].strip().lower()
+
+
+def _expected_size(payload: dict[str, Any], voice_note: dict[str, Any]) -> int | None:
+    value = payload.get("size_bytes")
+    if value is None:
+        value = voice_note.get("size_bytes")
+    if value is None:
+        return None
+    return int(value)
+
+
+def _validate_object_info(
+    info: ObjectInfo,
+    *,
+    object_key: str,
+    expected_size: int | None,
+    expected_content_type: str,
+    expected_etag: str | None,
+) -> None:
+    if not info.exists:
+        raise FileNotFoundError(f"object not found in storage: {object_key}")
+    if expected_size is not None and info.size != expected_size:
+        raise ValueError(
+            f"object size {info.size} does not match expected size {expected_size}"
+        )
+    got_type = _normalize_content_type(info.content_type)
+    want_type = _normalize_content_type(expected_content_type)
+    if got_type and want_type and got_type != want_type:
+        raise ValueError(
+            f"object content type {got_type!r} does not match expected {want_type!r}"
+        )
+    got_etag = (info.etag or "").strip('"')
+    want_etag = (expected_etag or "").strip('"')
+    if got_etag and want_etag and got_etag != want_etag:
+        raise ValueError("object etag changed after upload confirmation")
+
+
 def transcribe(job: dict[str, Any], cur) -> dict[str, Any]:
     payload = job.get("payload") or {}
     voice_note_id = payload["voice_note_id"]
@@ -62,16 +101,40 @@ def transcribe(job: dict[str, Any], cur) -> dict[str, Any]:
     mime_type = voice_note["mime_type"] or "application/octet-stream"
     if payload.get("object_key") and payload["object_key"] != object_key:
         raise ValueError("job payload object_key does not match voice note object_key")
+    expected_size = _expected_size(payload, voice_note)
+    expected_etag = payload.get("etag")
 
     provider = _make_provider()
 
     update_voice_note_status(
-        cur, voice_note_id=voice_note_id, tenant_id=tenant_id, status="transcribing"
+        cur,
+        voice_note_id=voice_note_id,
+        tenant_id=tenant_id,
+        status="transcribing",
+        expected_status="uploaded",
     )
 
-    if not object_exists(object_key):
-        raise FileNotFoundError(f"object not found in storage: {object_key}")
+    before = stat_object(object_key)
+    _validate_object_info(
+        before,
+        object_key=object_key,
+        expected_size=expected_size,
+        expected_content_type=mime_type,
+        expected_etag=expected_etag,
+    )
     audio_bytes = get_object_bytes(object_key)
+    if expected_size is not None and len(audio_bytes) != expected_size:
+        raise ValueError(
+            f"downloaded object size {len(audio_bytes)} does not match expected size {expected_size}"
+        )
+    after = stat_object(object_key)
+    _validate_object_info(
+        after,
+        object_key=object_key,
+        expected_size=expected_size,
+        expected_content_type=mime_type,
+        expected_etag=expected_etag or before.etag,
+    )
 
     started = time.perf_counter()
     try:
@@ -130,7 +193,11 @@ def transcribe(job: dict[str, Any], cur) -> dict[str, Any]:
     )
 
     update_voice_note_status(
-        cur, voice_note_id=voice_note_id, tenant_id=tenant_id, status="transcribed"
+        cur,
+        voice_note_id=voice_note_id,
+        tenant_id=tenant_id,
+        status="transcribed",
+        expected_status="transcribing",
     )
 
     next_job_id = enqueue_job(
@@ -143,6 +210,7 @@ def transcribe(job: dict[str, Any], cur) -> dict[str, Any]:
             "transcript_id": str(transcript_id),
         },
         idempotency_key=f"voice-note:{voice_note_id}:extract",
+        max_attempts=load_settings().max_retries,
     )
 
     return {

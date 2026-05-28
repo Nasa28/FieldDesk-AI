@@ -31,7 +31,8 @@ FieldDesk AI is a three-service system with one shared database.
 | Auth, tenancy, RBAC           | API     |
 | HTTP routing, validation      | API     |
 | Object storage presigning     | API     |
-| Job enqueue + status updates  | API     |
+| Job enqueue + user-facing job reads | API     |
+| Job execution status transitions    | Worker  |
 | Provider calls (LLM, STT, emb)| Worker  |
 | Cost + token accounting       | Worker writes, API reads |
 | Eval runs                     | Worker  |
@@ -40,6 +41,26 @@ FieldDesk AI is a three-service system with one shared database.
 The API does **not** call AI providers directly. The worker does **not** expose
 public HTTP. This boundary keeps secrets, retries, and cost accounting in one
 place and makes the API trivially horizontally scalable.
+
+### Shared Database Concurrency Contract
+
+Direct Postgres access from both the API and worker is intentional. The safety
+boundary is not "only one service can connect"; it is explicit row ownership,
+tenant scope, and state-checked writes:
+
+- API owns user commands: auth/session rows, upload confirmation, ticket edit /
+  approve / reject, review resolution, and admin budget settings.
+- Worker owns AI execution outputs: provider calls, transcripts, extractions,
+  review insertion from failed AI steps, and job execution status.
+- Every existing-row mutation on a shared table includes `tenant_id` and an
+  expected state predicate. A stale command returns a conflict instead of
+  overwriting newer work.
+- Job execution uses `FOR UPDATE SKIP LOCKED` to claim work, then `locked_by` +
+  `lease_expires_at` predicates to heartbeat, succeed, retry, or fail the job.
+- Review resolution locks the `human_reviews` row and updates the linked
+  `job_tickets` row only while it is still in an editable state.
+- Shared calculations belong in SQL views, not duplicated service code. Budget
+  enforcement and admin budget display both read `v_tenant_budget_usage`.
 
 ## 3. API Flow (request → response)
 

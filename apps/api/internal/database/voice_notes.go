@@ -162,26 +162,19 @@ func ConfirmVoiceNoteUploaded(
 	}
 
 	const enqueueJob = `
-		INSERT INTO ai_jobs (tenant_id, type, payload, idempotency_key, max_attempts)
-		VALUES ($1, 'transcribe', $2, $3, $4)
-		ON CONFLICT (tenant_id, idempotency_key) DO UPDATE
-			SET updated_at = now()
-		RETURNING id, tenant_id, type, status, payload, result, error_class, error_message,
-		          idempotency_key, attempt_count, max_attempts, run_after,
-		          started_at, finished_at, created_at, updated_at
-	`
+			INSERT INTO ai_jobs (tenant_id, type, payload, idempotency_key, max_attempts)
+			VALUES ($1, 'transcribe', $2, $3, $4)
+			ON CONFLICT (tenant_id, idempotency_key) DO UPDATE
+				SET updated_at = now()
+			RETURNING ` + aiJobColumns
 	maxAttempts := p.MaxAttempts
 	if maxAttempts == 0 {
 		maxAttempts = 5
 	}
 	var j AIJob
-	err = tx.QueryRow(ctx, enqueueJob,
+	err = scanAIJob(tx.QueryRow(ctx, enqueueJob,
 		p.TenantID, p.JobPayload, p.IdempotencyKey, maxAttempts,
-	).Scan(
-		&j.ID, &j.TenantID, &j.Type, &j.Status, &j.Payload, &j.Result,
-		&j.ErrorClass, &j.ErrorMessage, &j.IdempotencyKey, &j.AttemptCount, &j.MaxAttempts,
-		&j.RunAfter, &j.StartedAt, &j.FinishedAt, &j.CreatedAt, &j.UpdatedAt,
-	)
+	), &j)
 	if err != nil {
 		return ConfirmVoiceNoteUploadedResult{}, err
 	}

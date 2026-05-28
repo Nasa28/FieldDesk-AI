@@ -1,0 +1,11 @@
+packages:
+  - "apps/web"
+
+confirmModulesPurge: false
+
+allowBuilds:
+  lefthook: true  # installs the Go binary used by the pre-commit / pre-push hooks
+  sharp: true     # native bindings used by Next.js image optimization
+
+overrides:
+  postcss: "8.5.10"

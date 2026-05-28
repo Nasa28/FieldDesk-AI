@@ -96,14 +96,16 @@ func (h *Handlers) CreateVoiceNote(w http.ResponseWriter, r *http.Request) {
 
 	id := uuid.New()
 	objectKey := storage.ObjectKeyForVoiceNote(tenantID, id, req.Filename)
+	uploadedBy, _ := middleware.UserFromContext(r.Context())
 
 	v, err := database.CreateVoiceNote(r.Context(), h.db, database.CreateVoiceNoteParams{
-		ID:        id,
-		TenantID:  tenantID,
-		ObjectKey: objectKey,
-		MimeType:  req.MimeType,
-		SizeBytes: &req.SizeBytes,
-		Status:    "pending_upload",
+		ID:         id,
+		TenantID:   tenantID,
+		UploadedBy: uploadedBy,
+		ObjectKey:  objectKey,
+		MimeType:   req.MimeType,
+		SizeBytes:  &req.SizeBytes,
+		Status:     "pending_upload",
 	})
 	if err != nil {
 		h.logger.Error("create_voice_note_failed", "error", err, "tenant_id", tenantID)
@@ -182,6 +184,10 @@ func (h *Handlers) VoiceNoteUploadURL(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "get_failed", "could not load voice note")
 		return
 	}
+	if v.Status != "pending_upload" {
+		writeError(w, http.StatusConflict, "invalid_state", "voice note is no longer accepting uploads")
+		return
+	}
 
 	uploadURL, err := h.storage.PresignPut(r.Context(), v.ObjectKey, v.MimeType, h.cfg.PresignTTL)
 	if err != nil {
@@ -243,6 +249,9 @@ func (h *Handlers) VoiceNoteUploaded(w http.ResponseWriter, r *http.Request) {
 		"tenant_id":     tenantID.String(),
 		"object_key":    v.ObjectKey,
 		"mime_type":     v.MimeType,
+		"size_bytes":    info.Size,
+		"content_type":  info.ContentType,
+		"etag":          info.ETag,
 	})
 	if err != nil {
 		h.logger.Error("marshal_payload_failed", "error", err)
@@ -254,7 +263,7 @@ func (h *Handlers) VoiceNoteUploaded(w http.ResponseWriter, r *http.Request) {
 		TenantID:       tenantID,
 		JobPayload:     payload,
 		IdempotencyKey: fmt.Sprintf("voice-note:%s:transcribe", v.ID.String()),
-		MaxAttempts:    5,
+		MaxAttempts:    h.cfg.AIJobMaxAttempts,
 	})
 	if errors.Is(err, database.ErrInvalidState) {
 		writeError(w, http.StatusConflict, "invalid_state", "voice note cannot be confirmed from its current status")

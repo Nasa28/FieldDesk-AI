@@ -22,22 +22,69 @@ type VoiceNote struct {
 }
 
 type AIJob struct {
-	ID             uuid.UUID  `json:"id"`
-	TenantID       uuid.UUID  `json:"tenant_id"`
-	Type           string     `json:"type"`
-	Status         string     `json:"status"`
-	Payload        []byte     `json:"payload"`
-	Result         []byte     `json:"result,omitempty"`
-	ErrorClass     *string    `json:"error_class,omitempty"`
-	ErrorMessage   *string    `json:"error_message,omitempty"`
-	IdempotencyKey string     `json:"idempotency_key"`
-	AttemptCount   int32      `json:"attempt_count"`
-	MaxAttempts    int32      `json:"max_attempts"`
-	RunAfter       time.Time  `json:"run_after"`
-	StartedAt      *time.Time `json:"started_at,omitempty"`
-	FinishedAt     *time.Time `json:"finished_at,omitempty"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	ID             uuid.UUID       `json:"id"`
+	TenantID       uuid.UUID       `json:"tenant_id"`
+	Type           string          `json:"type"`
+	Status         string          `json:"status"`
+	Payload        json.RawMessage `json:"payload"`
+	Result         json.RawMessage `json:"result,omitempty"`
+	ErrorClass     *string         `json:"error_class,omitempty"`
+	ErrorMessage   *string         `json:"error_message,omitempty"`
+	IdempotencyKey string          `json:"idempotency_key"`
+	AttemptCount   int32           `json:"attempt_count"`
+	MaxAttempts    int32           `json:"max_attempts"`
+	RunAfter       time.Time       `json:"run_after"`
+	LockedBy       *string         `json:"locked_by,omitempty"`
+	LeaseExpiresAt *time.Time      `json:"lease_expires_at,omitempty"`
+	StartedAt      *time.Time      `json:"started_at,omitempty"`
+	FinishedAt     *time.Time      `json:"finished_at,omitempty"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
+}
+
+type AIJobAttempt struct {
+	ID            uuid.UUID  `json:"id"`
+	JobID         uuid.UUID  `json:"job_id"`
+	AttemptNumber int32      `json:"attempt_number"`
+	Status        string     `json:"status"`
+	ErrorClass    *string    `json:"error_class,omitempty"`
+	ErrorMessage  *string    `json:"error_message,omitempty"`
+	DurationMS    *int32     `json:"duration_ms,omitempty"`
+	StartedAt     time.Time  `json:"started_at"`
+	FinishedAt    *time.Time `json:"finished_at,omitempty"`
+}
+
+type Tenant struct {
+	ID        uuid.UUID `json:"id"`
+	Name      string    `json:"name"`
+	Slug      string    `json:"slug"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type User struct {
+	ID        uuid.UUID `json:"id"`
+	TenantID  uuid.UUID `json:"tenant_id"`
+	Email     string    `json:"email"`
+	FullName  *string   `json:"full_name,omitempty"`
+	Role      string    `json:"role"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type AuthSession struct {
+	TokenHash  string    `json:"-"`
+	TenantID   uuid.UUID `json:"tenant_id"`
+	UserID     uuid.UUID `json:"user_id"`
+	ExpiresAt  time.Time `json:"expires_at"`
+	CreatedAt  time.Time `json:"created_at"`
+	LastUsedAt time.Time `json:"last_used_at"`
+}
+
+type AuthContext struct {
+	Tenant  Tenant      `json:"tenant"`
+	User    User        `json:"user"`
+	Session AuthSession `json:"session"`
 }
 
 type JobTicket struct {

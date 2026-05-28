@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     )
     llm_provider: str = Field(default="openai", alias="LLM_PROVIDER")
     embedding_provider: str = Field(default="openai", alias="EMBEDDING_PROVIDER")
+    embedding_model: str = Field(default="text-embedding-3-small", alias="EMBEDDING_MODEL")
 
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
     anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
@@ -32,6 +33,8 @@ class Settings(BaseSettings):
     poll_interval_seconds: float = Field(default=2.0, alias="WORKER_POLL_INTERVAL_SECONDS")
     max_concurrent_jobs: int = Field(default=4, alias="WORKER_MAX_CONCURRENT_JOBS")
     max_retries: int = Field(default=5, alias="WORKER_MAX_RETRIES")
+    job_lease_seconds: int = Field(default=900, alias="WORKER_JOB_LEASE_SECONDS")
+    job_heartbeat_seconds: int = Field(default=60, alias="WORKER_JOB_HEARTBEAT_SECONDS")
 
 
 def load_settings() -> Settings:

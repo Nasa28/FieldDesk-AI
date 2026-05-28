@@ -59,7 +59,16 @@ class TranscriptionTests(unittest.TestCase):
         patches = [
             patch.object(service, "get_voice_note_for_update", get_voice_note_for_update),
             patch.object(service, "_make_provider", lambda: _Provider()),
-            patch.object(service, "object_exists", lambda key: True),
+            patch.object(
+                service,
+                "stat_object",
+                lambda key: service.ObjectInfo(
+                    exists=True,
+                    size=5,
+                    content_type="audio/mpeg",
+                    etag="abc123",
+                ),
+            ),
             patch.object(service, "get_object_bytes", lambda key: b"audio"),
             patch.object(service, "insert_transcript", lambda *args, **kwargs: "transcript-1"),
             patch.object(service, "insert_model_call", lambda *args, **kwargs: "call-1"),

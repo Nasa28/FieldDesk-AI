@@ -1,0 +1,103 @@
+# Lefthook quality gates for FieldDesk AI.
+#
+# Pre-commit: fast checks on staged files only (formatter, secrets, file size).
+# Pre-push:   project-wide checks (full build, vet, tests, architecture, AI
+#             logging, tenant boundaries, compose validation).
+#
+# Skip a hook with `LEFTHOOK=0 git commit ...` and explain in the PR.
+# These hooks ARE the CI — there's no GitHub Actions backstop today.
+
+pre-commit:
+  parallel: false
+  commands:
+    secret-scan:
+      run: scripts/check-secrets.sh
+
+    file-size:
+      run: node scripts/check-file-size.cjs --staged
+
+    block-env-files:
+      glob:
+        - "**/.env"
+        - "**/.env.local"
+        - "**/.env.*.local"
+        - "**/.env.development"
+        - "**/.env.production"
+        - "**/.env.test"
+      run: |
+        echo "❌ Blocked: do not commit env files."
+        echo "   Files: {staged_files}"
+        echo "   Use docker compose env_file, Fly secrets, or your platform's secret store."
+        exit 1
+
+    block-pem-files:
+      glob: "**/*.pem"
+      run: |
+        echo "❌ Blocked: do not commit PEM files (private keys / certs)."
+        echo "   Files: {staged_files}"
+        exit 1
+
+    go-fmt:
+      root: "apps/api/"
+      glob: "*.go"
+      stage_fixed: true
+      run: |
+        if command -v gofmt >/dev/null 2>&1; then
+          gofmt -w {staged_files}
+        else
+          echo "gofmt not installed; skipping"
+        fi
+
+pre-push:
+  parallel: true
+  commands:
+    file-size:
+      run: node scripts/check-file-size.cjs --all
+
+    secret-scan-all:
+      run: CHECK_SECRETS_SCOPE=all scripts/check-secrets.sh
+
+    go-boundaries:
+      run: scripts/check-go-boundaries.sh
+
+    tenant-filter:
+      run: |
+        if command -v python3 >/dev/null 2>&1; then
+          scripts/check-tenant-filter.py
+        else
+          echo "python3 not installed; skipping tenant-filter check"
+        fi
+
+    ai-model-call-logging:
+      run: |
+        if command -v python3 >/dev/null 2>&1; then
+          scripts/check-ai-model-call-logging.py
+        else
+          echo "python3 not installed; skipping ai-model-call-logging check"
+        fi
+
+    go-quality:
+      root: "apps/api/"
+      run: |
+        if command -v go >/dev/null 2>&1; then
+          make quality
+        else
+          echo "go not installed; skipping go-quality"
+        fi
+
+    python-compile:
+      root: "apps/worker/"
+      run: |
+        if command -v python3 >/dev/null 2>&1; then
+          python3 -m compileall -q fielddesk_worker
+        else
+          echo "python3 not installed; skipping python-compile"
+        fi
+
+    compose-validate:
+      run: |
+        if command -v docker >/dev/null 2>&1; then
+          docker compose --env-file .env.example config -q
+        else
+          echo "docker not installed; skipping compose-validate"
+        fi

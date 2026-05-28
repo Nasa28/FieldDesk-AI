@@ -54,3 +54,29 @@ system, not a demo. The rules below override default instincts an agent might ha
 - An eval case if the change touches extraction or RAG output.
 - A doc update if you changed an endpoint, schema, or workflow.
 - A short note in the PR on cost / latency impact if your change touches any provider call.
+
+## Quality gates
+
+There is no GitHub Actions CI today. The Lefthook hooks defined in [lefthook.yml](lefthook.yml) ARE the gates. Install once with `pnpm install` (runs `lefthook install` via the `prepare` script).
+
+**Pre-commit** (staged files, fast):
+- `scripts/check-secrets.sh` — blocks AWS / Anthropic / OpenAI / Stripe / GitHub / Slack / PEM patterns.
+- `node scripts/check-file-size.cjs --staged` — soft/hard line-count caps per area (300/500 for handlers, 350/550 for database files, etc.). First line `// lint-file-size: <reason>` (or `# lint-file-size:` for Python/sh) is the escape hatch.
+- `block-env-files` / `block-pem-files` glob rules.
+- `gofmt -w` on staged `*.go` files.
+
+**Pre-push** (project-wide):
+- `node scripts/check-file-size.cjs --all`.
+- `CHECK_SECRETS_SCOPE=all scripts/check-secrets.sh`.
+- `scripts/check-go-boundaries.sh` — handlers and HTTP layer must not import `pgx` / `database/sql` / sqlc and must not call `.Query/.QueryRow/.Exec/.Begin/.BeginTx` outside `apps/api/internal/database/`.
+- `scripts/check-tenant-filter.py` — every SQL `WHERE` clause in `apps/api/internal/database/*.go`, `apps/api/sql/queries/*.sql`, and `apps/worker/fielddesk_worker/db_queries/*.py` must mention `tenant_id`. Escape: `// lint-tenant-filter: <reason>` or `# lint-tenant-filter: <reason>` on the line before the query.
+- `scripts/check-ai-model-call-logging.py` — any worker file that calls `provider.transcribe/extract_ticket/embed/complete_json` must also call `insert_model_call` or `log_model_call_isolated`. Escape: `# lint-ai-logging: <reason>` anywhere in the file.
+- `make -C apps/api quality` (`fmt-check vet build test`).
+- `python3 -m compileall -q apps/worker/fielddesk_worker`.
+- `docker compose --env-file .env.example config -q`.
+
+**Local one-shot run** of every gate: `pnpm gates`.
+
+**Skipping**: `LEFTHOOK=0 git commit ...` or `LEFTHOOK=0 git push ...` bypasses the hooks. Use it only with an explanation in the PR description; the hooks exist because we don't have a CI safety net.
+
+**When you add a new gate**: extend `lefthook.yml`, add the script under `scripts/`, document it in this section, and update `pnpm gates` so a one-shot run still covers everything.

@@ -20,8 +20,9 @@ Base path: `/v1`. All routes require a tenant context except `/healthz`, `/ready
 | GET    | `/voice-notes/{id}`               | Fetch voice note with transcript + tickets             |
 | GET    | `/tickets`                        | List tickets                                           |
 | GET    | `/tickets/{id}`                   | Fetch one ticket (with RAG suggestions)                |
-| PATCH  | `/tickets/{id}`                   | Edit ticket fields                                     |
+| PATCH  | `/tickets/{id}`                   | Edit draft/needs_review/rejected ticket fields         |
 | POST   | `/tickets/{id}/approve`           | Approve a draft → final                                |
+| POST   | `/tickets/{id}/reject`            | Reject a draft/needs_review ticket                     |
 | GET    | `/documents`                      | List uploaded knowledge documents                      |
 | POST   | `/documents`                      | Create document + enqueue embedding job                |
 | DELETE | `/documents/{id}`                 | Remove document + chunks                               |

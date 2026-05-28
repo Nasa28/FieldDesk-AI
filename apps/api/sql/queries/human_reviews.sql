@@ -44,6 +44,7 @@ SET status = 'resolved',
     resolved_at = now(),
     job_ticket_id = $3,
     correction = $4,
-    notes = COALESCE($5, notes)
+    notes = COALESCE($5, notes),
+    reviewer_id = COALESCE($6, reviewer_id)
 WHERE id = $1 AND tenant_id = $2
 RETURNING *;

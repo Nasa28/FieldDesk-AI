@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from fielddesk_worker.config import load_settings
 from fielddesk_worker.db_queries import (
+    enqueue_job,
     get_transcript,
     insert_ai_extraction,
     insert_human_review,
@@ -95,7 +96,7 @@ def extract(job: dict[str, Any], cur) -> dict[str, Any]:
         log_model_call_isolated(
             tenant_id=tenant_id,
             job_id=job["id"],
-            kind="extraction",
+            kind="llm",
             provider=_expected_provider_name(),
             model=_expected_model_name(),
             duration_ms=elapsed_ms,
@@ -150,7 +151,7 @@ def extract(job: dict[str, Any], cur) -> dict[str, Any]:
         cur,
         tenant_id=tenant_id,
         job_id=job["id"],
-        kind="extraction",
+        kind="llm",
         provider=result.provider,
         model=result.model,
         duration_ms=result.duration_ms,
@@ -172,7 +173,6 @@ def extract(job: dict[str, Any], cur) -> dict[str, Any]:
             "review_reason": review_reason,
             **(result.metadata or {}),
         },
-        durable=False,
     )
 
     job_ticket_id: str | None = None
@@ -187,7 +187,21 @@ def extract(job: dict[str, Any], cur) -> dict[str, Any]:
             fields=parsed_output_jsonable or {},
         )
         link_extraction_to_ticket(
-            cur, extraction_id=extraction_id, job_ticket_id=job_ticket_id
+            cur,
+            extraction_id=extraction_id,
+            tenant_id=tenant_id,
+            job_ticket_id=job_ticket_id,
+        )
+        # Auto-enqueue a RAG retrieval so the ticket page can show "Related
+        # documents" without a second human action. Idempotency key includes
+        # the ticket id so re-running extraction (e.g. after a re-resolve)
+        # coalesces onto the same rag job rather than spawning duplicates.
+        enqueue_job(
+            cur,
+            tenant_id=tenant_id,
+            type_="rag",
+            payload={"ticket_id": job_ticket_id, "top_k": 5, "source": "auto"},
+            idempotency_key=f"rag:ticket:{job_ticket_id}",
         )
     else:
         human_review_id = insert_human_review(

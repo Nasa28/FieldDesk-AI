@@ -65,6 +65,43 @@ func (h *Handlers) GetTicket(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, t)
 }
 
+func (h *Handlers) UpdateTicket(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := middleware.TenantFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing_tenant", "tenant context missing")
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_id", "id must be a UUID")
+		return
+	}
+	var body database.TicketCorrection
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_body", err.Error())
+		return
+	}
+	if !body.HasPatchField() {
+		writeError(w, http.StatusBadRequest, "invalid_patch", "request must include at least one ticket field")
+		return
+	}
+	t, err := database.UpdateTicket(r.Context(), h.db, id, tenantID, body)
+	if errors.Is(err, database.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "ticket not found")
+		return
+	}
+	if errors.Is(err, database.ErrInvalidState) {
+		writeError(w, http.StatusConflict, "invalid_state", "ticket can only be edited while draft, needs_review, or rejected")
+		return
+	}
+	if err != nil {
+		h.logger.Error("update_ticket_failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "update_failed", "could not update ticket")
+		return
+	}
+	writeJSON(w, http.StatusOK, t)
+}
+
 func (h *Handlers) ApproveTicket(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := middleware.TenantFromContext(r.Context())
 	if !ok {
@@ -76,10 +113,14 @@ func (h *Handlers) ApproveTicket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_id", "id must be a UUID")
 		return
 	}
-	// approved_by stays nil until real auth lands.
-	t, err := database.ApproveTicket(r.Context(), h.db, id, tenantID, nil)
+	approvedBy, _ := middleware.UserFromContext(r.Context())
+	t, err := database.ApproveTicket(r.Context(), h.db, id, tenantID, approvedBy)
 	if errors.Is(err, database.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "ticket not found")
+		return
+	}
+	if errors.Is(err, database.ErrInvalidState) {
+		writeError(w, http.StatusConflict, "invalid_state", "only draft tickets can be approved")
 		return
 	}
 	if err != nil {
@@ -115,6 +156,10 @@ func (h *Handlers) RejectTicket(w http.ResponseWriter, r *http.Request) {
 	t, err := database.RejectTicket(r.Context(), h.db, id, tenantID, body.Reason)
 	if errors.Is(err, database.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "ticket not found")
+		return
+	}
+	if errors.Is(err, database.ErrInvalidState) {
+		writeError(w, http.StatusConflict, "invalid_state", "only draft or needs_review tickets can be rejected")
 		return
 	}
 	if err != nil {

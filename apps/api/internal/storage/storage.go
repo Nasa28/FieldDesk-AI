@@ -19,6 +19,7 @@ type ObjectInfo struct {
 	Exists      bool
 	Size        int64
 	ContentType string
+	ETag        string
 }
 
 func ObjectKeyForVoiceNote(tenantID, voiceNoteID uuid.UUID, filename string) string {
@@ -28,6 +29,17 @@ func ObjectKeyForVoiceNote(tenantID, voiceNoteID uuid.UUID, filename string) str
 		tenantID.String(),
 		"voice-notes",
 		voiceNoteID.String(),
+		clean,
+	)
+}
+
+func ObjectKeyForDocument(tenantID, documentID uuid.UUID, filename string) string {
+	clean := sanitizeFilename(filename)
+	return path.Join(
+		"tenants",
+		tenantID.String(),
+		"documents",
+		documentID.String(),
 		clean,
 	)
 }

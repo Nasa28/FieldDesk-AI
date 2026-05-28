@@ -201,6 +201,7 @@ func GetHumanReview(ctx context.Context, db *DB, id, tenantID uuid.UUID) (HumanR
 type ResolveHumanReviewParams struct {
 	ReviewID   uuid.UUID
 	TenantID   uuid.UUID
+	ReviewerID *uuid.UUID
 	Correction TicketCorrection
 	Notes      *string
 }
@@ -269,11 +270,12 @@ func ResolveHumanReview(
 		    resolved_at = now(),
 		    job_ticket_id = $3,
 		    correction = $4,
-		    notes = COALESCE($5, notes)
+		    notes = COALESCE($5, notes),
+		    reviewer_id = COALESCE($6, reviewer_id)
 		WHERE id = $1 AND tenant_id = $2
 		RETURNING ` + humanReviewColumns
 	if err := scanHumanReview(tx.QueryRow(ctx, updateReview,
-		p.ReviewID, p.TenantID, ticket.ID, correctionJSON, p.Notes,
+		p.ReviewID, p.TenantID, ticket.ID, correctionJSON, p.Notes, p.ReviewerID,
 	), &review); err != nil {
 		return ResolveHumanReviewResult{}, err
 	}

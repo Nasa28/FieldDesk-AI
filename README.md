@@ -11,17 +11,125 @@ production team." See `docs/PRD.md` and `AGENTS.md` for the rules of the road.
 
 ## Status
 
-**Phase 1, step 5 implemented.** The human review loop is now end-to-end.
-`GET /v1/review-queue` returns open reviews enriched with the linked voice
-note, transcript, AI extraction, and draft ticket (when any). `POST
-/v1/review-queue/{id}/resolve` accepts a `correction` payload, creates or
-updates a draft `job_tickets` row in the same transaction, and marks the
-review `resolved`. `POST /v1/tickets/{id}/approve` and `.../reject` finalize
-the ticket. The previous extraction routing (low confidence, invalid JSON,
-provider uncertainty, missing fields) keeps producing `human_reviews` rows;
-the new endpoints now consume them. A `v_human_review_metrics` SQL view
-exposes basic correction-rate counters. RAG, document upload, real auth,
-and the web UI remain placeholders.
+**Phase 4 (RAG) backend implemented.** Documents now upload, parse, chunk,
+embed, and search end-to-end via a hybrid (dense + lexical) retrieval
+recipe grounded in mid-2026 production practice.
+
+- **Upload + ingest**: `POST /v1/documents` mirrors the voice-notes flow
+  (create row → presigned PUT → confirm). Supported v1 formats: `.txt`,
+  `.md`, text-native `.pdf`, `.docx`. Scanned PDFs, encrypted PDFs,
+  `.doc`, and PPTX are deferred (a `failed` document with `parse_error`
+  is surfaced to the operator rather than silently producing bad chunks).
+- **Parsing** (`apps/worker/fielddesk_worker/parsing/`): heading-aware for
+  markdown and DOCX, per-page for PDF (citations carry `source_page`),
+  text fallback. Each parser emits `ParsedSegment(text, heading_path,
+  source_page, source_locator)`.
+- **Chunking**: token-aware via `tiktoken` (cl100k_base), 512 tokens
+  target / 64 tokens overlap, recursive split on `\n\n` → `\n` →
+  sentence boundaries → hard token cut as last resort. Idempotent via
+  SHA-256 `content_hash` (text + heading_path + source_page) with a
+  partial `UNIQUE` index so re-ingest doesn't duplicate.
+- **Embeddings**: pluggable provider — `text-embedding-3-small` by
+  default (`text-embedding-3-large` is one config flip away).
+  Halfvec(1536) column with HNSW (`m=16, ef_construction=200`); old
+  `vector(1536)` + IVFFlat from migration 00007 is replaced in 00017.
+- **Hybrid retrieval**: single SQL CTE in
+  `apps/api/internal/database/rag.go` + `apps/worker/.../db_queries/rag.py`
+  — dense (cosine) + lexical (`tsvector` + `ts_rank_cd`) fused with RRF
+  (k=60), tenant-scoped at the outer `WHERE`. Returns top-K with
+  `chunk_id`, `document_title`, `heading_path`, `source_page`,
+  `dense_rank`, `lexical_rank`, `fused_score`.
+- **Ad-hoc search**: `POST /v1/rag/search` enqueues a `rag` job and
+  returns 202 + `job_id`; results land in `ai_jobs.result` and
+  `rag_queries`. The Go API deliberately holds no embedding provider
+  keys — keeps the boundary that worker = AI, API = HTTP/DB.
+- **Auto-suggest on tickets**: when extraction creates a `job_ticket`,
+  a `rag` job is enqueued (idempotency: `rag:ticket:<id>`). The ticket
+  page reads it via `GET /v1/rag/queries/by-ticket/{id}`.
+- **Cost + budget enforcement**: embeddings are gated by the existing
+  Phase 3 budget pre-flight (`embed` is in `BUDGET_GATED_JOB_TYPES`).
+  Cost lands in `ai_model_calls` with `kind='embedding'`.
+
+**Deferred from Phase 4** (named, with reason):
+
+- Reranking (Cohere Rerank 3.5 / BGE-v2-m3). Research consensus is to
+  defer until eval data shows top-3 precision is the bottleneck;
+  retrieval-only first.
+- Contextual retrieval (Anthropic-style heading-aware blurbs). Worth
+  trying after baseline eval; adds Anthropic dependency to ingest.
+- OCR for scanned PDFs, encrypted PDF unlocking, `.doc`, PPTX, structured
+  table extraction.
+- Web UI: documents page (upload + list), ticket-detail "Related
+  documents" section. These come in Phase 4b.
+- RAG eval gold set (recall@5, MRR). Skeleton table exists
+  (`ai_eval_runs`); runner is Phase 4c.
+
+**Phase 3 bullet 5 (tenant budgets) implemented.**
+`PUT /v1/admin/budgets` upserts the tenant's daily / monthly / per-ticket
+caps + `pause_on_exceeded` toggle. `GET /v1/admin/budgets` returns the
+current limits together with today's spend, month-to-date spend, and the
+`daily_over` / `monthly_over` flags computed by a Postgres view
+(`v_tenant_budget_usage`). Both the Go API and the Python worker read
+from the same view so the math can't drift.
+
+Enforcement runs in the worker as a **pre-flight check**: right after
+`_claim_next_job` claims a job, `_budget_blocked` reads the view; if the
+tenant is over budget AND `pause_on_exceeded = true`, the job is routed
+to `needs_review` with `error_class = 'budget_exceeded'` and a
+`human_reviews` row with `reason = 'budget_exceeded'`. No provider call
+is made, so no spend is incurred. Existing unified failure feed at
+`/admin/failures` surfaces the blocked job automatically.
+
+`draft_ticket` jobs are exempt (no provider call → no spend). The PRD's
+`max_cost_per_ticket` cap is still deferred for the same reason
+"most expensive tickets" is — it needs a denormalized `job_ticket_id`
+column on `ai_model_calls`, or the JSONB-join chain.
+
+**Phase 3b implemented.** The web dashboard now consumes the Phase 3a
+admin endpoints. `/settings` is the canonical place to set the tenant ID
+(persisted to `localStorage`, attached as `X-Tenant-ID` on every request).
+`/costs` shows the rollup card (total / successful / failed cost split),
+per-kind table, and per-provider/model table. `/ai-logs` is the raw
+provider-call feed with filters (kind, provider, success) and cursor
+pagination. `/failures` is the same shape, scoped to `success = false`,
+with a running "failed cost (loaded rows)" indicator at the top. All
+three pages share `lib/dashboard.ts` for window defaults, USD formatting,
+and RFC3339 conversion. Tables, not charts — charts are a follow-up.
+
+**Phase 3a implemented.** Cost and observability endpoints are live on the
+API. `GET /v1/admin/costs` returns a tenant-scoped cost rollup over a time
+window (total, successful, and explicitly failed cost separated, plus
+per-`kind` and per-`provider`/`model` breakdowns). `GET /v1/admin/metrics`
+returns `ai_jobs` counters by status, a retry rate, a success/failure rate
+over terminal jobs, and `percentile_cont` p50/p95 latency per `kind`. `GET
+/v1/admin/failures` and `GET /v1/model-logs` paginate raw `ai_model_calls`
+rows with cursor pagination and optional `kind` / `provider` / `success`
+filters. Every query filters by `tenant_id` at the outer `WHERE` (the
+`scripts/check-tenant-filter.py` gate enforces this).
+
+**Deferred from Phase 3** (named, not dropped):
+
+- "Most expensive tickets" and "avg cost per ticket" — need the JSONB
+  join chain `ai_model_calls.job_id → ai_jobs.payload->>'voice_note_id'
+  → job_tickets.voice_note_id`. Will denormalize a `job_ticket_id`
+  column on `ai_model_calls` when Phase 4 (RAG) adds more cost rows
+  worth attributing per-ticket.
+- `max_cost_per_ticket` cap — same dependency.
+- "Cost by user" — needs real auth.
+- Slack / email alerts when budget approached — separate slice; we
+  don't have a notifications channel yet.
+- Model routing (cheap vs. strong by task / confidence) — different
+  lever; not budget enforcement.
+- Charts. Tables first.
+
+**Phase 1 + 2 (prior status).** Voice → transcribe → extract → human
+review → approve/reject is end-to-end. `GET /v1/review-queue` returns
+open reviews enriched with the linked voice note, transcript, AI
+extraction, and draft ticket. `POST /v1/review-queue/{id}/resolve` accepts
+a `correction` payload, creates or updates a draft `job_tickets` row in the
+same transaction, and marks the review `resolved`. `POST
+/v1/tickets/{id}/approve` and `.../reject` finalize the ticket. RAG,
+document upload, real auth, and the web UI remain placeholders.
 
 ## Layout
 
@@ -417,7 +525,10 @@ curl -sS "http://localhost:8080/v1/tickets/$TICKET_ID" \
   -H "X-Tenant-ID: $TENANT_ID" | python3 -m json.tool
 ```
 
-### 6. Approve the ticket
+### 6. Approve or reject the ticket
+
+Approval is a terminal transition for a draft ticket. To test rejection, use a
+different draft ticket or run the reject command instead of approve.
 
 ```bash
 curl -sS -X POST "http://localhost:8080/v1/tickets/$TICKET_ID/approve" \
@@ -425,16 +536,20 @@ curl -sS -X POST "http://localhost:8080/v1/tickets/$TICKET_ID/approve" \
 # status: "approved", approved_at: now
 ```
 
-### 7. Reject a different ticket
+To reject a draft/needs_review ticket:
 
 ```bash
-curl -sS -X POST "http://localhost:8080/v1/tickets/$TICKET_ID/reject" \
+REJECT_TICKET_ID=$(curl -sS "http://localhost:8080/v1/tickets?status=draft&limit=1" \
+  -H "X-Tenant-ID: $TENANT_ID" \
+  | python3 -c 'import json,sys;print(json.load(sys.stdin)["tickets"][0]["id"])')
+
+curl -sS -X POST "http://localhost:8080/v1/tickets/$REJECT_TICKET_ID/reject" \
   -H "Content-Type: application/json" -H "X-Tenant-ID: $TENANT_ID" \
   -d '{"reason": "duplicate of TKT-1234"}' | python3 -m json.tool
 # status: "rejected", rejected_at: now, rejected_reason set
 ```
 
-### 8. Inspect the correction-rate view
+### 7. Inspect the correction-rate view
 
 ```bash
 docker compose exec postgres psql -U fielddesk -d fielddesk -c \
@@ -444,6 +559,106 @@ docker compose exec postgres psql -U fielddesk -d fielddesk -c \
 Columns: `tenant_id`, `total_reviews`, `resolved_reviews`, `open_reviews`,
 `low_confidence_reviews`, `invalid_json_reviews`, `provider_uncertainty_reviews`,
 `missing_fields_reviews`, `reviews_with_corrections`.
+
+## Cost & observability demo
+
+After running the vertical-slice demo (so `ai_model_calls` has rows), call
+the new admin endpoints. They accept optional `from` / `to` (RFC3339) query
+parameters; defaults to the last 7 days. The window is capped at 366 days.
+
+```bash
+# Tenant-scoped cost rollup + per-kind + per-model.
+curl -s -H "X-Tenant-ID: $TENANT_ID" \
+  "http://localhost:8080/v1/admin/costs?from=2026-05-01T00:00:00Z&to=2026-06-01T00:00:00Z" | jq
+
+# Job counters, success / failure / retry rate, latency p50/p95 per kind.
+curl -s -H "X-Tenant-ID: $TENANT_ID" \
+  "http://localhost:8080/v1/admin/metrics" | jq
+
+# Failures feed (success = false), cursor-paginated by created_at.
+curl -s -H "X-Tenant-ID: $TENANT_ID" \
+  "http://localhost:8080/v1/admin/failures?limit=20" | jq
+
+# Raw model-call log with filters.
+curl -s -H "X-Tenant-ID: $TENANT_ID" \
+  "http://localhost:8080/v1/model-logs?kind=transcription&success=success&limit=10" | jq
+```
+
+`/v1/admin/costs` separates `success_cost_usd` from `failed_cost_usd` —
+failed calls still cost money and are surfaced, not hidden.
+`/v1/admin/metrics.job_success_rate` and `job_failure_rate` are over
+*terminal* jobs only (`succeeded + failed`) so in-flight jobs don't skew
+the rate. Pagination on `/v1/admin/failures` and `/v1/model-logs` uses an
+RFC3339Nano `cursor` (pass the previous response's `next_cursor`).
+
+## Web dashboard demo (Phase 3b)
+
+```bash
+docker compose up -d        # if not already running
+pnpm install                # once
+pnpm web:dev                # http://localhost:3000
+```
+
+1. Open <http://localhost:3000/settings>, paste the tenant UUID from
+   `./scripts/seed.sh`, click **Save**. It writes to `localStorage` under
+   `fielddesk.tenant_id` and `lib/api.ts` attaches `X-Tenant-ID` on every
+   subsequent request.
+2. Run the vertical-slice demo (above) so `ai_model_calls` has rows.
+3. Open `/costs`. Adjust the **From** / **To** datetime inputs and hit
+   **Refresh**. The rollup separates `successful_cost` from
+   `failed_cost` — if a provider call fails after charging, it lands in
+   the failed bucket and stays visible.
+4. Open `/ai-logs`. Filter by **Kind** (`transcription` / `llm` /
+   `embedding` / `rerank`), by **Provider**, or by **Success**. Click
+   **Load more** to page through `ai_model_calls` via cursor.
+5. Open `/failures`. Same shape, locked to `success = false`. The card
+   at the top sums failed cost across the loaded rows.
+
+The dashboard page (`/dashboard`) consumes `/v1/admin/metrics` and
+`/v1/admin/costs`.
+
+## Tenant budgets demo (Phase 3 bullet 5)
+
+Set a tight cap so the next provider call trips it:
+
+```bash
+curl -s -X PUT -H "X-Tenant-ID: $TENANT_ID" -H "Content-Type: application/json" \
+  -d '{"daily_budget_usd": 0.01, "monthly_budget_usd": 1.0, "pause_on_exceeded": true}' \
+  http://localhost:8080/v1/admin/budgets | jq
+
+# Read back the view: limits + today's spend + month-to-date + over flags.
+curl -s -H "X-Tenant-ID: $TENANT_ID" http://localhost:8080/v1/admin/budgets | jq
+```
+
+Then re-run the vertical-slice demo. After the first `ai_model_calls`
+row pushes the tenant over `$0.01`, the *next* `transcribe` / `extract` /
+`embed` / `rag` job pulled by the worker will:
+
+1. Read `v_tenant_budget_usage` (single source of truth, same view the
+   API admin endpoint reads).
+2. See `daily_over = true` and `pause_on_exceeded = true`.
+3. Update its `ai_jobs` row to `status = 'needs_review'` with
+   `error_class = 'budget_exceeded'` and a detail like
+   `budget_exceeded: daily $0.0156 >= $0.01`.
+4. Insert a `human_reviews` row with `reason = 'budget_exceeded'`.
+5. Skip `handle_job` entirely — no provider call, no spend.
+
+The job lands in `/admin/failures` (unified feed) and in
+`/review-queue`. Clear the cap (`PUT` with null limits) or raise it to
+unblock the queue; existing `needs_review` jobs stay there until the
+operator resolves them.
+
+`draft_ticket` jobs are exempt (no provider call → no spend).
+`max_cost_per_ticket` is accepted by the upsert but **not yet enforced**
+— deferred with the JSONB-denormalization for "most expensive tickets."
+
+The same flow is available from the web app: open `/settings`, set the
+tenant ID, and the **Tenant AI budgets** card below shows today's spend
+vs. the daily cap, MTD spend vs. the monthly cap (with a colored
+progress bar that turns yellow at 80% and red when over), plus inputs
+to edit the caps and a toggle for `pause_on_exceeded`. Saving calls
+`PUT /v1/admin/budgets` and re-reads the view so the bars refresh
+immediately.
 
 ## Development Workflow
 

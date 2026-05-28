@@ -76,8 +76,9 @@ These thresholds are tunable per-tenant in `tenant_ai_budgets`-adjacent settings
 
 1. Anything flagged is inserted into `human_reviews` with a `reason`.
 2. Review queue UI shows the original transcript, the AI extraction, and the draft ticket side by side.
-3. Reviewer edits fields → submit → API patches `job_tickets`, sets `status='approved'`, records the diff in `human_reviews.correction`, sets `resolved_at`.
-4. The correction is the ground truth used to compute the human correction rate eval.
+3. Reviewer edits fields → submit → API creates or patches a draft `job_tickets` row, records the diff in `human_reviews.correction`, and sets `resolved_at`.
+4. Dispatcher approves or rejects the resulting draft ticket through the ticket API.
+5. The correction is the ground truth used to compute the human correction rate eval.
 
 ## 6. Retry Workflow
 

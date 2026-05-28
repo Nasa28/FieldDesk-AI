@@ -23,7 +23,9 @@ type Config struct {
 	S3UseSSL          bool
 
 	VoiceNoteMaxBytes int64
+	DocumentMaxBytes  int64
 	PresignTTL        time.Duration
+	AIJobMaxAttempts  int32
 
 	AIWorkerURL string
 }
@@ -43,7 +45,9 @@ func Load() (*Config, error) {
 		S3SecretAccessKey: os.Getenv("S3_SECRET_ACCESS_KEY"),
 		S3UseSSL:          getenvBool("S3_USE_SSL", false),
 		VoiceNoteMaxBytes: getenvInt64("VOICE_NOTE_MAX_BYTES", 50*1024*1024),
+		DocumentMaxBytes:  getenvInt64("DOCUMENT_MAX_BYTES", 25*1024*1024),
 		PresignTTL:        time.Duration(getenvInt64("PRESIGN_TTL_SECONDS", 900)) * time.Second,
+		AIJobMaxAttempts:  int32(getenvInt64("AI_JOB_MAX_ATTEMPTS", getenvInt64("WORKER_MAX_RETRIES", 5))),
 		AIWorkerURL:       os.Getenv("AI_WORKER_URL"),
 	}
 

@@ -72,6 +72,7 @@ func (m *MinIO) Stat(ctx context.Context, key string) (ObjectInfo, error) {
 			Exists:      true,
 			Size:        info.Size,
 			ContentType: info.ContentType,
+			ETag:        strings.Trim(info.ETag, `"`),
 		}, nil
 	}
 	er := minio.ToErrorResponse(err)

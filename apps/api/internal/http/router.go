@@ -40,14 +40,14 @@ func NewRouter(cfg *config.Config, db *database.DB, logger *slog.Logger, store s
 	r.Route("/v1", func(r chi.Router) {
 		// /auth is outside RequireTenant because signup/login establish the tenant.
 		r.Route("/auth", func(r chi.Router) {
-			r.Post("/signup", h.NotImplemented)
-			r.Post("/login", h.NotImplemented)
-			r.Post("/logout", h.NotImplemented)
-			r.Get("/me", h.NotImplemented)
+			r.Post("/signup", h.Signup)
+			r.Post("/login", h.Login)
+			r.Post("/logout", h.Logout)
+			r.Get("/me", h.Me)
 		})
 
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.RequireTenant)
+			r.Use(middleware.RequireTenant(db))
 
 			r.Route("/voice-notes", func(r chi.Router) {
 				r.Get("/", h.ListVoiceNotes)
@@ -60,25 +60,28 @@ func NewRouter(cfg *config.Config, db *database.DB, logger *slog.Logger, store s
 			r.Route("/tickets", func(r chi.Router) {
 				r.Get("/", h.ListTickets)
 				r.Get("/{id}", h.GetTicket)
-				r.Patch("/{id}", h.NotImplemented)
+				r.Patch("/{id}", h.UpdateTicket)
 				r.Post("/{id}/approve", h.ApproveTicket)
 				r.Post("/{id}/reject", h.RejectTicket)
 			})
 
 			r.Route("/documents", func(r chi.Router) {
-				r.Get("/", h.NotImplemented)
-				r.Post("/", h.NotImplemented)
-				r.Delete("/{id}", h.NotImplemented)
+				r.Get("/", h.ListDocuments)
+				r.Post("/", h.CreateDocument)
+				r.Get("/{id}", h.GetDocument)
+				r.Post("/{id}/upload-url", h.DocumentUploadURL)
+				r.Post("/{id}/uploaded", h.DocumentUploaded)
+				r.Delete("/{id}", h.DeleteDocument)
 			})
 
 			r.Route("/ai-jobs", func(r chi.Router) {
-				r.Get("/", h.NotImplemented)
-				r.Get("/{id}", h.NotImplemented)
-				r.Post("/{id}/retry", h.NotImplemented)
+				r.Get("/", h.ListAIJobs)
+				r.Get("/{id}", h.GetAIJob)
+				r.Post("/{id}/retry", h.RetryAIJob)
 			})
 
 			r.Route("/model-logs", func(r chi.Router) {
-				r.Get("/", h.NotImplemented)
+				r.Get("/", h.ListModelLogs)
 			})
 
 			r.Route("/review-queue", func(r chi.Router) {
@@ -86,12 +89,17 @@ func NewRouter(cfg *config.Config, db *database.DB, logger *slog.Logger, store s
 				r.Post("/{id}/resolve", h.ResolveReview)
 			})
 
+			r.Route("/rag", func(r chi.Router) {
+				r.Post("/search", h.RAGSearch)
+				r.Get("/queries/by-ticket/{id}", h.RAGQueryByTicket)
+			})
+
 			r.Route("/admin", func(r chi.Router) {
-				r.Get("/metrics", h.NotImplemented)
-				r.Get("/costs", h.NotImplemented)
-				r.Get("/failures", h.NotImplemented)
-				r.Get("/budgets", h.NotImplemented)
-				r.Put("/budgets", h.NotImplemented)
+				r.Get("/metrics", h.AdminMetrics)
+				r.Get("/costs", h.Costs)
+				r.Get("/failures", h.AdminFailures)
+				r.Get("/budgets", h.GetBudgets)
+				r.Put("/budgets", h.PutBudgets)
 			})
 		})
 	})

@@ -1,0 +1,25 @@
+{
+  "name": "fielddesk-ai",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Quality-gate harness for FieldDesk AI. App code lives under apps/.",
+  "packageManager": "pnpm@11.2.2",
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=10"
+  },
+  "scripts": {
+    "prepare": "lefthook install || true",
+    "gates": "node scripts/check-file-size.cjs --all && scripts/check-secrets.sh && scripts/check-go-boundaries.sh && scripts/check-tenant-filter.py && scripts/check-ai-model-call-logging.py",
+    "gates:secrets": "CHECK_SECRETS_SCOPE=all scripts/check-secrets.sh",
+    "gates:filesize": "node scripts/check-file-size.cjs --all",
+    "web:dev": "pnpm --filter fielddesk-web dev",
+    "web:build": "pnpm --filter fielddesk-web build",
+    "web:start": "pnpm --filter fielddesk-web start",
+    "web:typecheck": "pnpm --filter fielddesk-web typecheck",
+    "web:lint": "pnpm --filter fielddesk-web lint"
+  },
+  "devDependencies": {
+    "lefthook": "^1.7.18"
+  }
+}

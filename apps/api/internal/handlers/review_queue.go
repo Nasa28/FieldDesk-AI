@@ -61,10 +61,12 @@ func (h *Handlers) ResolveReview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_body", err.Error())
 		return
 	}
+	reviewerID, _ := middleware.UserFromContext(r.Context())
 
 	result, err := database.ResolveHumanReview(r.Context(), h.db, database.ResolveHumanReviewParams{
 		ReviewID:   id,
 		TenantID:   tenantID,
+		ReviewerID: reviewerID,
 		Correction: body.Correction,
 		Notes:      body.Notes,
 	})
@@ -73,7 +75,7 @@ func (h *Handlers) ResolveReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errors.Is(err, database.ErrInvalidState) {
-		writeError(w, http.StatusConflict, "already_resolved", "review is not in 'open' state")
+		writeError(w, http.StatusConflict, "invalid_state", "review or linked ticket is no longer resolvable")
 		return
 	}
 	if errors.Is(err, database.ErrInvalidCorrection) {

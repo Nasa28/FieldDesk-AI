@@ -126,6 +126,34 @@ func GetTicket(ctx context.Context, db *DB, id, tenantID uuid.UUID) (JobTicket, 
 	return t, err
 }
 
+func ticketMissingOrInvalidState(ctx context.Context, db *DB, id, tenantID uuid.UUID) error {
+	var exists bool
+	q := `SELECT EXISTS (
+		SELECT 1 FROM job_tickets WHERE id = $1 AND tenant_id = $2
+	)`
+	if err := db.QueryRow(ctx, q, id, tenantID).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return ErrNotFound
+	}
+	return ErrInvalidState
+}
+
+func ticketMissingOrInvalidStateTx(ctx context.Context, tx pgx.Tx, id, tenantID uuid.UUID) error {
+	var exists bool
+	q := `SELECT EXISTS (
+		SELECT 1 FROM job_tickets WHERE id = $1 AND tenant_id = $2
+	)`
+	if err := tx.QueryRow(ctx, q, id, tenantID).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return ErrNotFound
+	}
+	return ErrInvalidState
+}
+
 type ListTicketsParams struct {
 	TenantID uuid.UUID
 	Status   string
@@ -171,11 +199,12 @@ func ApproveTicket(
 			    rejected_reason = NULL,
 			    updated_at = now()
 			WHERE id = $1 AND tenant_id = $2
+			  AND status = 'draft'
 			RETURNING ` + jobTicketColumns
 	var t JobTicket
 	err := scanJobTicket(db.QueryRow(ctx, q, id, tenantID, approvedBy), &t)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return JobTicket{}, ErrNotFound
+		return JobTicket{}, ticketMissingOrInvalidState(ctx, db, id, tenantID)
 	}
 	return t, err
 }
@@ -191,11 +220,54 @@ func RejectTicket(
 			    approved_by = NULL,
 			    updated_at = now()
 			WHERE id = $1 AND tenant_id = $2
+			  AND status IN ('draft', 'needs_review')
 			RETURNING ` + jobTicketColumns
 	var t JobTicket
 	err := scanJobTicket(db.QueryRow(ctx, q, id, tenantID, reason), &t)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return JobTicket{}, ErrNotFound
+		return JobTicket{}, ticketMissingOrInvalidState(ctx, db, id, tenantID)
+	}
+	return t, err
+}
+
+func UpdateTicket(ctx context.Context, db *DB, id, tenantID uuid.UUID, c TicketCorrection) (JobTicket, error) {
+	q := `UPDATE job_tickets SET
+			customer_name = COALESCE($3, customer_name),
+			customer_phone = COALESCE($4, customer_phone),
+			service_address = COALESCE($5, service_address),
+			trade_type = COALESCE($6, trade_type),
+			issue_summary = COALESCE($7, issue_summary),
+			detailed_description = COALESCE($8, detailed_description),
+			priority = COALESCE($9, priority),
+			preferred_visit_time = COALESCE($10, preferred_visit_time),
+			required_skills = COALESCE($11::text[], required_skills),
+			suggested_parts = COALESCE($12::text[], suggested_parts),
+			safety_concerns = COALESCE($13::text[], safety_concerns),
+			warranty_mention = COALESCE($14, warranty_mention),
+			follow_up_questions = COALESCE($15::text[], follow_up_questions),
+			status = 'draft',
+			human_review_required = false,
+			approved_at = NULL,
+			approved_by = NULL,
+			rejected_at = NULL,
+			rejected_reason = NULL,
+			updated_at = now()
+		WHERE id = $1 AND tenant_id = $2
+		  AND status IN ('draft', 'needs_review', 'rejected')
+		RETURNING ` + jobTicketColumns
+	var t JobTicket
+	err := scanJobTicket(db.QueryRow(ctx, q, id, tenantID,
+		c.CustomerName, c.CustomerPhone, c.ServiceAddress,
+		c.TradeType, c.IssueSummary, c.DetailedDescription,
+		c.Priority, c.PreferredVisitTime,
+		stringSliceArg(c.RequiredSkills),
+		stringSliceArg(c.SuggestedParts),
+		stringSliceArg(c.SafetyConcerns),
+		c.WarrantyMentioned,
+		stringSliceArg(c.FollowUpQuestions),
+	), &t)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return JobTicket{}, ticketMissingOrInvalidState(ctx, db, id, tenantID)
 	}
 	return t, err
 }
@@ -225,10 +297,15 @@ func createOrUpdateTicketTx(
 			safety_concerns = COALESCE($13::text[], safety_concerns),
 			warranty_mention = COALESCE($14, warranty_mention),
 			follow_up_questions = COALESCE($15::text[], follow_up_questions),
-			status = CASE WHEN status = 'rejected' THEN status ELSE 'draft' END,
+			status = 'draft',
 			human_review_required = false,
+			approved_at = NULL,
+			approved_by = NULL,
+			rejected_at = NULL,
+			rejected_reason = NULL,
 			updated_at = now()
 		WHERE id = $1 AND tenant_id = $2
+		  AND status IN ('draft', 'needs_review')
 		RETURNING ` + jobTicketColumns
 		var t JobTicket
 		err := scanJobTicket(tx.QueryRow(ctx, q, *existingID, tenantID,
@@ -242,7 +319,7 @@ func createOrUpdateTicketTx(
 			stringSliceArg(c.FollowUpQuestions),
 		), &t)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return JobTicket{}, ErrNotFound
+			return JobTicket{}, ticketMissingOrInvalidStateTx(ctx, tx, *existingID, tenantID)
 		}
 		return t, err
 	}
