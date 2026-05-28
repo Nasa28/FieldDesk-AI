@@ -97,35 +97,99 @@ SEED_DOCUMENT_TITLES: list[str] = [
 
 
 GOLDEN_RAG_CASES: list[RAGCase] = [
+    # Direct cases — query uses vocabulary that overlaps either the document
+    # title or its visible terms. Lexical channel does most of the work
+    # here; if these regress, BM25 weighting or schema indexing is broken.
     RAGCase(
         name="rag.hydraulic_pressure_loss",
         query_text="hydraulic pump losing pressure, customer reports slow lift",
         expected_document_titles=[DOC_HYDRAULIC_PUMP],
-        tags=["hvac", "troubleshooting"],
+        tags=["hvac", "troubleshooting", "direct"],
     ),
     RAGCase(
         name="rag.water_heater_no_hot_water",
         query_text="tankless water heater not producing hot water at any faucet",
         expected_document_titles=[DOC_TANKLESS_WATER_HEATER],
-        tags=["plumbing"],
+        tags=["plumbing", "direct"],
     ),
     RAGCase(
         name="rag.confined_space_concern",
         query_text="customer mentioned sewer line repair in a crawlspace",
         expected_document_titles=[DOC_CONFINED_SPACE],
-        tags=["safety", "plumbing"],
+        tags=["safety", "plumbing", "direct"],
     ),
     RAGCase(
         name="rag.warranty_question",
         query_text="customer asks if labor is covered under our standard warranty",
         expected_document_titles=[DOC_LEAD_TECH_WARRANTY],
-        tags=["warranty"],
+        tags=["warranty", "direct"],
     ),
     RAGCase(
         name="rag.parts_lookup",
         query_text="bringing a replacement copper p-trap and supply lines",
         expected_document_titles=[DOC_PARTS_CATALOG],
-        tags=["parts", "plumbing"],
+        tags=["parts", "plumbing", "direct"],
+    ),
+
+    # Paraphrase cases — same intent as a direct case but worded so the
+    # lexical channel has almost nothing to grip on. Tests whether the
+    # dense (embedding) channel is pulling its weight. If recall stays
+    # high here, the embedding model is doing real semantic work; if it
+    # craters, reranking can't save us — embedding quality is the limit.
+    RAGCase(
+        name="rag.hydraulic.paraphrase_boom_slow",
+        query_text="boom on the lift won't go up as fast as it used to even at full throttle",
+        expected_document_titles=[DOC_HYDRAULIC_PUMP],
+        tags=["paraphrase", "semantic"],
+    ),
+    RAGCase(
+        name="rag.water_heater.paraphrase_cold_shower",
+        query_text="shower's running cold this morning even though gas is on at the meter",
+        expected_document_titles=[DOC_TANKLESS_WATER_HEATER],
+        tags=["paraphrase", "semantic"],
+    ),
+    RAGCase(
+        name="rag.confined_space.paraphrase_oxygen_vault",
+        query_text="what oxygen percentage is safe before going into an equipment vault",
+        expected_document_titles=[DOC_CONFINED_SPACE],
+        tags=["paraphrase", "semantic", "safety"],
+    ),
+    RAGCase(
+        name="rag.warranty.paraphrase_solder_redo",
+        query_text="do we charge to redo a joint we soldered that started leaking a year later",
+        expected_document_titles=[DOC_LEAD_TECH_WARRANTY],
+        tags=["paraphrase", "semantic"],
+    ),
+    RAGCase(
+        name="rag.parts.paraphrase_truck_inventory",
+        query_text="how many half-inch elbows should a tech keep on the truck",
+        expected_document_titles=[DOC_PARTS_CATALOG],
+        tags=["paraphrase", "semantic", "parts"],
+    ),
+
+    # Cross-topic cases — queries that legitimately involve two documents.
+    # Only the *primary* doc with the actual answer is in expected_titles.
+    # A case passes if the primary appears anywhere in top-K — but the
+    # interesting signal for downstream rerank work will be the *hit_rank*
+    # (closer to 1 = better precision). If reranking lands, these are
+    # where the win shows up first.
+    RAGCase(
+        name="rag.cross.parts_for_hydraulic_repair",
+        query_text="what spare parts do I need to bring for a hydraulic pump service call",
+        # Primary: pump doc explains the worn-vane / inlet-seal failure
+        # modes and their fixes. Parts catalog might also lexically match
+        # on "parts" but doesn't list hydraulic-specific items.
+        expected_document_titles=[DOC_HYDRAULIC_PUMP],
+        tags=["cross-topic", "precision"],
+    ),
+    RAGCase(
+        name="rag.cross.warranty_on_tankless_install",
+        query_text="how long is our warranty on a brand-new tankless water heater install",
+        # Primary: warranty doc has the actual coverage period ("1 year on
+        # full installations"). The tankless service manual is lexically
+        # adjacent but doesn't speak to warranty.
+        expected_document_titles=[DOC_LEAD_TECH_WARRANTY],
+        tags=["cross-topic", "precision", "warranty"],
     ),
 ]
 

@@ -122,9 +122,29 @@ def run_rag_evals(
         else 0.0
     )
     recall_at_k = passed / total if total else 0.0
+    # recall@1 and recall@3 are the metrics that actually move when
+    # reranking lands. recall@5 is structurally saturated whenever the
+    # corpus is <= top_k (every case can find its doc somewhere), but
+    # the rank-bucketed numbers reveal precision at the top. We compute
+    # all three so future eval runs can chart top-1 / top-3 alongside
+    # top-K without re-defining the case set.
+    recall_at_1 = (
+        sum(1 for r in results if r.hit_rank is not None and r.hit_rank <= 1)
+        / total
+        if total
+        else 0.0
+    )
+    recall_at_3 = (
+        sum(1 for r in results if r.hit_rank is not None and r.hit_rank <= 3)
+        / total
+        if total
+        else 0.0
+    )
 
     metrics: dict[str, Any] = {
         "top_k": top_k,
+        "recall_at_1": recall_at_1,
+        "recall_at_3": recall_at_3,
         "recall_at_k": recall_at_k,
         "mrr": mrr,
         "tenant_chunk_count": chunk_count,

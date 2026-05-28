@@ -162,20 +162,41 @@ the eval doesn't race the embed jobs. Without it, the script returns right
 after enqueueing and you have to wait ~10-30 seconds yourself.
 
 **Measured baseline (against live OpenAI `text-embedding-3-small`,
-2026-05-28):** `recall@5 = 1.0`, `MRR = 1.0` — every one of the 5 golden
-cases retrieved its expected document at rank 1. Embedding spend for the
-full dogfood (5 docs ingested + 5 eval queries) was 102 input tokens, ~$0
-at quoted prices.
+2026-05-28, n=12 cases):**
 
-This is a perfect score on a deliberately small (n=5) golden set with
-non-adversarial queries written to be retrievable; it is a
-"plumbing-works" signal, not a production-quality benchmark. The
-honest next move (deferred) is broadening the golden set with harder
-cases — paraphrased queries, near-duplicate documents, queries that
-should *not* retrieve anything from this corpus — and only then making
-eval-driven decisions on reranking / contextual retrieval. A regression
-from 1.0 on this set is still a real signal, though, which is what the
-nightly cron is for.
+| metric | value | what it tracks |
+| --- | --- | --- |
+| `recall@1` | **0.917** | primary headline — the right doc as the top result |
+| `recall@3` | 1.000 | saturated — see note below |
+| `recall@5` | 1.000 | saturated — corpus has 5 docs, k=5 |
+| `MRR` | 0.958 | average reciprocal rank of the first hit |
+
+`recall@5` is structurally saturated whenever `corpus_size <= top_k` —
+every case can find its doc somewhere in the returned list. The
+discriminating metric on this corpus is `recall@1`: one case
+(`rag.warranty.paraphrase_solder_redo`, asking about a soldered joint
+springing a leak a year later) lands at rank 2 because the dense
+channel ties the warranty doc with the parts catalog. That's the
+exact shape of failure reranking is built to fix; a future rerank
+slice should show `recall@1 = 1.0` if it's helping.
+
+The golden set has three categories (n=12 total):
+
+- **direct** (n=5) — queries reuse vocabulary from the doc; lexical
+  channel carries the load.
+- **paraphrase** (n=5) — query and doc share almost no words; dense
+  channel has to do real semantic work.
+- **cross-topic** (n=2) — query legitimately involves two docs; the
+  *primary* doc with the actual answer is expected to rank highest.
+
+Embedding spend for the full dogfood (5 docs + 12 queries) was ~150
+input tokens. Sub-cent at quoted prices.
+
+Honest gap: a production benchmark would broaden the corpus past 5
+docs and add negative-case queries (test that low-relevance queries
+return low-confidence retrieval rather than confident garbage). The
+retrieval scorer doesn't surface a confidence threshold to the eval
+yet — adding it is a separate slice.
 
 Before any of that hits a live stack, [test_seed_corpus.py](fielddesk-ai/apps/worker/tests/test_seed_corpus.py)
 exercises the parser + chunker against each markdown file (no DB, no
