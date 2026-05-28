@@ -32,11 +32,12 @@ def retrieve(job: dict[str, Any], cur) -> dict[str, Any]:
         rag_queries row with job_ticket_id set. UI shows this on the ticket.
 
       Ad-hoc (POST /v1/rag/search):
-          {"query_text": "...", "top_k": 5, "source": "ad_hoc"}
+          {"query_text": "...", "top_k": 5, "source": "ad_hoc", "answer": true}
         Embeds the literal query, runs hybrid search, persists a
         rag_queries row with job_ticket_id NULL. The job result also
         contains the chunks so a polling client can pick them up directly
-        without joining rag_queries.
+        without joining rag_queries. When answer=true, the worker also
+        synthesizes a grounded answer from those chunks.
     """
     tenant_id = str(job["tenant_id"])
     payload = job.get("payload") or {}
@@ -112,11 +113,23 @@ def retrieve(job: dict[str, Any], cur) -> dict[str, Any]:
         duration_ms=duration_ms,
     )
 
+    answer: dict[str, Any] | None = None
+    if not ticket_id_raw and _truthy(payload.get("answer")):
+        from fielddesk_worker.rag.answer import synthesize_answer
+
+        answer = synthesize_answer(
+            cur=cur,
+            job=job,
+            tenant_id=tenant_id,
+            query_text=query_text,
+            chunks=results,
+            rag_query_id=str(rag_query_id),
+        )
+
     # Phase 4.5: auto-enqueue the synthesis step for ticket-bound retrievals.
-    # Ad-hoc /v1/rag/search calls (no ticket_id) don't get synthesized — there's
-    # no ticket to attach recs to. Idempotency key includes the rag_query_id so
-    # re-running rag on the same ticket produces one synthesis per retrieval
-    # rather than spawning duplicates that overwrite each other's cost rows.
+    # Idempotency key includes the rag_query_id so re-running rag on the same
+    # ticket produces one synthesis per retrieval rather than spawning
+    # duplicates that overwrite each other's cost rows.
     if ticket_id_raw:
         enqueue_job(
             cur,
@@ -135,10 +148,11 @@ def retrieve(job: dict[str, Any], cur) -> dict[str, Any]:
         rag_query_id=rag_query_id,
         ticket_id=str(ticket_id_raw) if ticket_id_raw else None,
         chunks=len(results),
+        answered=answer is not None,
         cost_usd=metrics.cost_usd,
         duration_ms=duration_ms,
     )
-    return {
+    response = {
         "rag_query_id": rag_query_id,
         "ticket_id": str(ticket_id_raw) if ticket_id_raw else None,
         "chunks": len(results),
@@ -147,6 +161,10 @@ def retrieve(job: dict[str, Any], cur) -> dict[str, Any]:
         "duration_ms": duration_ms,
         "embedding_model": metrics.model,
     }
+    if answer is not None:
+        response["answer"] = answer
+        response["answer_cost_usd"] = answer.get("cost_usd", 0.0)
+    return response
 
 
 def _build_query_from_ticket(ticket: dict[str, Any]) -> str:
@@ -169,6 +187,14 @@ def _format_halfvec_literal(vec: list[float]) -> str:
     """Postgres-accepted literal form for halfvec inputs. The driver doesn't
     have native halfvec encoding so we build the string in Python."""
     return "[" + ",".join(f"{x:.7f}" for x in vec) + "]"
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return bool(value)
 
 
 def _clean_result_row(row: dict[str, Any]) -> dict[str, Any]:

@@ -316,10 +316,11 @@ recipe grounded in mid-2026 production practice.
   `retrieval_text`; results still return raw `text` for citations. Returns
   top-K with `chunk_id`, `document_title`, `heading_path`, `source_page`,
   `dense_rank`, `lexical_rank`, `fused_score`.
-- **Ad-hoc search**: `POST /v1/rag/search` enqueues a `rag` job and
-  returns 202 + `job_id`; results land in `ai_jobs.result` and
-  `rag_queries`. The Go API deliberately holds no embedding provider
-  keys — keeps the boundary that worker = AI, API = HTTP/DB.
+- **Ad-hoc search / ask**: `POST /v1/rag/search` enqueues retrieval only;
+  `POST /v1/rag/ask` enqueues retrieval plus grounded answer synthesis.
+  Both return 202 + `job_id`; clients poll `/v1/ai-jobs/{id}`. Results land
+  in `ai_jobs.result` and `rag_queries`. The Go API deliberately holds no
+  provider keys — keeps the boundary that worker = AI, API = HTTP/DB.
 - **Auto-suggest on tickets**: when extraction creates a `job_ticket`,
   a `rag` job is enqueued (idempotency: `rag:ticket:<id>`). The ticket
   page reads it via `GET /v1/rag/queries/by-ticket/{id}`.

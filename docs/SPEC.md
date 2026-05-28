@@ -26,6 +26,9 @@ Base path: `/v1`. All routes require a tenant context except `/healthz`, `/ready
 | GET    | `/documents`                      | List uploaded knowledge documents                      |
 | POST   | `/documents`                      | Create document + enqueue embedding job                |
 | DELETE | `/documents/{id}`                 | Remove document + chunks                               |
+| POST   | `/rag/search`                     | Ad-hoc document retrieval job                          |
+| POST   | `/rag/ask`                        | Ad-hoc retrieval + grounded answer job                 |
+| GET    | `/rag/queries/by-ticket/{id}`     | Latest ticket-bound retrieval                          |
 | GET    | `/ai-jobs`                        | List jobs (filterable by status, type, time)           |
 | GET    | `/ai-jobs/{id}`                   | Job detail + attempts                                  |
 | POST   | `/ai-jobs/{id}/retry`             | Manually retry a failed job                            |

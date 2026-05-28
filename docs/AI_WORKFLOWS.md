@@ -54,6 +54,11 @@ Steps:
 5. Auto-enqueue a `draft_ticket` synthesis job (workflow §3a) keyed on the new rag_query id.
 6. Surface retrieved chunks in the UI as "Related documents."
 
+Ad-hoc knowledge-base queries use the same `rag` job without a ticket id.
+`POST /v1/rag/search` returns retrieved passages in `ai_jobs.result`; `POST
+/v1/rag/ask` also runs answer synthesis after retrieval and stores the
+grounded answer under `ai_jobs.result.answer`.
+
 ## 3a. RAG Synthesis Workflow (Phase 4.5)
 
 Input: a `job_tickets` row + the queued `rag_queries` row for that ticket.
@@ -72,6 +77,20 @@ Steps:
 6. Surface in the UI as the "Suggestions" section on the ticket card.
 
 The synthesis call is the highest-injection-risk LLM call in the system. The prompt explicitly tells the model that text inside `<ticket>` and `<chunk>` tags is data, never instructions, and golden cases in `evals/recommendations.py` verify that hostile ticket/chunk text cannot plant forbidden parts or override safety entries.
+
+## 3b. Knowledge-Base Answer Workflow
+
+Input: free-text user question.
+Output: `ai_jobs.result.answer` with an answer, citations, confidence, and follow-up questions.
+
+Steps:
+
+1. Enqueue a `rag` job from `/v1/rag/ask` with `answer=true`.
+2. Embed the question, run hybrid retrieval/rerank, and persist `rag_queries`.
+3. If retrieval returned zero chunks: short-circuit with `insufficient_context=true`.
+4. Otherwise, build a delimited prompt with the question wrapped as untrusted data and each chunk wrapped via `wrap_untrusted_chunk`.
+5. Call the LLM provider's `complete_json` adapter; validate against `KnowledgeAnswerOutput`.
+6. Drop citations that do not match retrieved chunk ids, log one `ai_model_calls` row with `purpose=kb_answer`, and return the answer through the existing AI job polling endpoint.
 
 ## 4. Confidence Scoring
 

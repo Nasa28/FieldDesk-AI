@@ -11,6 +11,7 @@ const NAV_ITEMS = [
   { href: "/voice-notes", label: "Voice Notes" },
   { href: "/review-queue", label: "Review Queue" },
   { href: "/documents", label: "Documents" },
+  { href: "/knowledge", label: "Knowledge Base" },
   { href: "/ai-logs", label: "AI Logs" },
   { href: "/costs", label: "Costs" },
   { href: "/failures", label: "Failures" },

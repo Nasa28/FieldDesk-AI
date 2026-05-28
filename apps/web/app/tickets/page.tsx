@@ -16,6 +16,7 @@ type Ticket = {
   detailed_description?: string;
   priority?: string;
   required_skills: string[];
+  follow_up_questions: string[];
   confidence?: number;
   created_at: string;
 };
@@ -29,6 +30,7 @@ type Draft = {
   detailed_description: string;
   priority: string;
   required_skills: string;
+  follow_up_questions: string;
 };
 
 function draftFromTicket(ticket: Ticket): Draft {
@@ -41,7 +43,31 @@ function draftFromTicket(ticket: Ticket): Draft {
     detailed_description: ticket.detailed_description ?? "",
     priority: ticket.priority ?? "normal",
     required_skills: (ticket.required_skills ?? []).join(", "),
+    follow_up_questions: (ticket.follow_up_questions ?? []).join("\n"),
   };
+}
+
+function lines(value: string): string[] {
+  return value
+    .split("\n")
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
+
+function appendFollowUpAnswers(
+  description: string,
+  questions: string[],
+  answers: string[],
+): string {
+  const pairs = questions
+    .map((question, i) => ({ question, answer: answers[i]?.trim() ?? "" }))
+    .filter((pair) => pair.answer);
+  if (pairs.length === 0) return description;
+  const block = [
+    "Follow-up answers:",
+    ...pairs.flatMap((pair) => [`Q: ${pair.question}`, `A: ${pair.answer}`]),
+  ].join("\n");
+  return [description.trim(), block].filter(Boolean).join("\n\n");
 }
 
 export default function TicketsPage() {
@@ -87,6 +113,7 @@ export default function TicketsPage() {
             .split(",")
             .map((v) => v.trim())
             .filter(Boolean),
+          follow_up_questions: lines(draft.follow_up_questions),
         }),
       });
       await load();
@@ -200,12 +227,75 @@ export default function TicketsPage() {
                 <span>Description</span>
                 <textarea value={draft.detailed_description} onChange={(e) => updateDraft(ticket.id, { detailed_description: e.target.value })} />
               </label>
+              <TicketFollowUps
+                questions={lines(draft.follow_up_questions)}
+                onApply={(answers) =>
+                  updateDraft(ticket.id, {
+                    detailed_description: appendFollowUpAnswers(
+                      draft.detailed_description,
+                      lines(draft.follow_up_questions),
+                      answers,
+                    ),
+                  })
+                }
+                onClear={() => updateDraft(ticket.id, { follow_up_questions: "" })}
+              />
               <RelatedDocuments ticketId={ticket.id} />
               <TicketRecommendations ticketId={ticket.id} />
             </div>
           );
         })}
         {tickets.length === 0 && <div className="card muted">No tickets.</div>}
+      </div>
+    </div>
+  );
+}
+
+function TicketFollowUps({
+  questions,
+  onApply,
+  onClear,
+}: {
+  questions: string[];
+  onApply: (answers: string[]) => void;
+  onClear: () => void;
+}) {
+  const [answers, setAnswers] = useState<string[]>([]);
+
+  useEffect(() => {
+    setAnswers(questions.map(() => ""));
+  }, [questions.join("\n")]);
+
+  if (questions.length === 0) return null;
+
+  return (
+    <div style={{ marginTop: 16, borderTop: "1px solid var(--border)", paddingTop: 12 }}>
+      <div className="toolbar" style={{ alignItems: "center", marginBottom: 8 }}>
+        <div style={{ flex: 1 }}>
+          <div className="muted" style={{ fontSize: 12 }}>Clarifying questions</div>
+        </div>
+        <button
+          onClick={() => onApply(answers)}
+          disabled={!answers.some((answer) => answer.trim())}
+        >
+          Add answers
+        </button>
+        <button onClick={onClear}>Clear</button>
+      </div>
+      <div className="grid">
+        {questions.map((question, i) => (
+          <label className="field" key={`${i}:${question}`}>
+            <span>{question}</span>
+            <input
+              value={answers[i] ?? ""}
+              onChange={(e) => {
+                const next = [...answers];
+                next[i] = e.target.value;
+                setAnswers(next);
+              }}
+            />
+          </label>
+        ))}
       </div>
     </div>
   );

@@ -17,6 +17,7 @@ import (
 type ragSearchRequest struct {
 	QueryText string `json:"query_text"`
 	TopK      int    `json:"top_k"`
+	Answer    bool   `json:"answer"`
 }
 
 // RAGSearch enqueues an ad-hoc retrieval job and returns its id immediately.
@@ -26,6 +27,16 @@ type ragSearchRequest struct {
 // completion and then read the result via rag_queries (job_id correlated via
 // payload).
 func (h *Handlers) RAGSearch(w http.ResponseWriter, r *http.Request) {
+	h.enqueueAdHocRAG(w, r, false)
+}
+
+// RAGAsk is the knowledge-base Q&A path: same retrieval job as /search, plus
+// worker-side grounded answer synthesis in ai_jobs.result.answer.
+func (h *Handlers) RAGAsk(w http.ResponseWriter, r *http.Request) {
+	h.enqueueAdHocRAG(w, r, true)
+}
+
+func (h *Handlers) enqueueAdHocRAG(w http.ResponseWriter, r *http.Request, forceAnswer bool) {
 	tenantID, ok := middleware.TenantFromContext(r.Context())
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "missing_tenant", "tenant context missing")
@@ -53,12 +64,14 @@ func (h *Handlers) RAGSearch(w http.ResponseWriter, r *http.Request) {
 	if topK > 25 {
 		topK = 25
 	}
+	answer := forceAnswer || req.Answer
 
 	payload, err := json.Marshal(map[string]any{
 		"tenant_id":  tenantID.String(),
 		"query_text": req.QueryText,
 		"top_k":      topK,
 		"source":     "ad_hoc",
+		"answer":     answer,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "could not encode payload")
@@ -69,8 +82,12 @@ func (h *Handlers) RAGSearch(w http.ResponseWriter, r *http.Request) {
 	// identical requests in flight coalesce, but a different query produces a
 	// new job. We use the tenant + query hash; users hitting the same query
 	// rapidly get the cached job rather than spawning N copies.
-	idem := fmt.Sprintf("rag:adhoc:%s:%d:%x",
-		tenantID.String(), topK, hashQueryText(req.QueryText))
+	mode := "search"
+	if answer {
+		mode = "answer"
+	}
+	idem := fmt.Sprintf("rag:adhoc:%s:%s:%d:%x",
+		mode, tenantID.String(), topK, hashQueryText(req.QueryText))
 
 	job, err := database.EnqueueAIJob(r.Context(), h.db, database.EnqueueAIJobParams{
 		TenantID:       tenantID,
@@ -93,8 +110,9 @@ func (h *Handlers) RAGSearch(w http.ResponseWriter, r *http.Request) {
 		"status":  job.Status,
 		"job_url": fmt.Sprintf("/v1/ai-jobs/%s", job.ID),
 		"query": map[string]any{
-			"text":  req.QueryText,
-			"top_k": topK,
+			"text":   req.QueryText,
+			"top_k":  topK,
+			"answer": answer,
 		},
 	})
 }

@@ -95,6 +95,7 @@ func NewRouter(cfg *config.Config, db *database.DB, logger *slog.Logger, store s
 
 			r.Route("/rag", func(r chi.Router) {
 				r.Post("/search", h.RAGSearch)
+				r.Post("/ask", h.RAGAsk)
 				r.Get("/queries/by-ticket/{id}", h.RAGQueryByTicket)
 			})
 
