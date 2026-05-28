@@ -170,6 +170,36 @@ func (h *Handlers) RejectTicket(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, t)
 }
 
+// GetTicketRecommendations returns the most recent ticket_recommendations
+// row attached to a ticket — the structured RAG-synthesis output produced
+// by the draft_ticket job after the rag job retrieves chunks for the
+// ticket. Returns 404 when synthesis hasn't completed yet; the client
+// distinguishes "pending" from a real error by treating the 404 as
+// "still working" (see the Suggestions component on the web side).
+func (h *Handlers) GetTicketRecommendations(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := middleware.TenantFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing_tenant", "tenant context missing")
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_id", "id must be a UUID")
+		return
+	}
+	rec, err := database.GetLatestRecommendationForTicket(r.Context(), h.db, id, tenantID)
+	if errors.Is(err, database.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "no recommendations yet for this ticket")
+		return
+	}
+	if err != nil {
+		h.logger.Error("get_ticket_recommendations_failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "load_failed", "could not load recommendations")
+		return
+	}
+	writeJSON(w, http.StatusOK, rec)
+}
+
 func parseInt32(s string, fallback int32) int32 {
 	if s == "" {
 		return fallback

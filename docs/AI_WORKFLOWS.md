@@ -49,10 +49,29 @@ Steps:
 
 1. Compose a query from `issue_summary` + `detailed_description` + `trade_type`.
 2. Embed the query using the configured embedding model.
-3. Cosine-similarity search over `document_chunks` filtered by `tenant_id`.
-4. (Optional) Re-rank top-N with an LLM if budget allows.
-5. Store results on `rag_queries.results` and link to the ticket.
-6. Surface in the UI as: similar past tickets, relevant SOPs, parts to bring, safety checklist, follow-up questions.
+3. Hybrid retrieval (dense + lexical with RRF fusion) over `document_chunks` filtered by `tenant_id`.
+4. Store results on `rag_queries.results` and link to the ticket.
+5. Auto-enqueue a `draft_ticket` synthesis job (workflow §3a) keyed on the new rag_query id.
+6. Surface retrieved chunks in the UI as "Related documents."
+
+## 3a. RAG Synthesis Workflow (Phase 4.5)
+
+Input: a `job_tickets` row + the queued `rag_queries` row for that ticket.
+Output: `ticket_recommendations` row with structured recs (possible diagnosis, suggested parts, safety checklist, follow-up questions, citations).
+
+Steps:
+
+1. Load ticket fields + the queued rag_query.results in one tenant-scoped query.
+2. If retrieval returned zero chunks: insert a `ticket_recommendations` row with `insufficient_context=true`, no LLM call, no spend.
+3. Otherwise, build a delimited prompt:
+   - `system`: the `RECS_SYSTEM_PROMPT` (carries all output-format and safety rules).
+   - `user`: ticket summary wrapped via `wrap_untrusted_ticket_summary`, then each chunk wrapped via `wrap_untrusted_chunk(chunk_id, text)` with HTML-escaped content and a sanitized chunk_id.
+   - Cap per-chunk text at 1200 chars, limit to top 8 chunks. Defense-in-depth on top of retrieval's top-k.
+4. Call the LLM provider's `complete_json` adapter; validate the JSON against `RecommendationsOutput`. Invalid JSON → persist a degraded row with `json_valid=false, insufficient_context=true` and the error.
+5. Log one `ai_model_calls` row (kind=llm, purpose=recs_synthesis).
+6. Surface in the UI as the "Suggestions" section on the ticket card.
+
+The synthesis call is the highest-injection-risk LLM call in the system. The prompt explicitly tells the model that text inside `<ticket>` and `<chunk>` tags is data, never instructions, and golden cases in `evals/recommendations.py` verify that hostile ticket/chunk text cannot plant forbidden parts or override safety entries.
 
 ## 4. Confidence Scoring
 

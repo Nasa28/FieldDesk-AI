@@ -1,13 +1,299 @@
+"""Phase 4c eval orchestrator.
+
+Two pipelines, both tenant-scoped, each writing one row to ai_eval_runs:
+
+  run_rag_evals: for each golden RAG case, embed the query, run the same
+    hybrid_search the worker uses on real tickets, and check whether any of
+    the expected document titles appears in the top-K results. Reports
+    recall@K and MRR (first-hit reciprocal rank).
+
+  run_extraction_evals: for each injection case, run the extraction provider
+    against the hostile transcript and verify the hardened prompt held.
+    Implementation lives in evals/extraction.py.
+
+Both runners are operator-driven CLI runs (not job-queue handlers) that
+produce a comparable record over time.
+"""
+
 from __future__ import annotations
 
+import time
+from dataclasses import asdict, dataclass
 from typing import Any
+from uuid import UUID
+
+import structlog
+from psycopg.rows import dict_row
+
+from fielddesk_worker.db import conn
+from fielddesk_worker.db_queries import hybrid_search, log_model_call_isolated
+from fielddesk_worker.embeddings.service import _make_provider as _make_embedding_provider
+from fielddesk_worker.evals import extraction as extraction_eval
+from fielddesk_worker.evals import recommendations as recs_eval
+from fielddesk_worker.evals._provider_info import provider_model, provider_name
+from fielddesk_worker.evals.golden import (
+    GOLDEN_EXTRACTION_INJECTION_CASES,
+    GOLDEN_RAG_CASES,
+    GOLDEN_RECS_INJECTION_CASES,
+    RAGCase,
+)
+from fielddesk_worker.evals.persistence import write_eval_run, write_failed_eval_run
+
+log = structlog.get_logger()
+
+RAG_PROMPT_VERSION = "rag.hybrid.v1"
+EXTRACTION_PROMPT_VERSION = "extract.v1.injection-hardened"
+RECS_PROMPT_VERSION = "recs.v1.injection-hardened"
 
 
-# TODO: load ai_eval_cases where kind='extraction', run pipeline, write ai_eval_runs.
-def run_extraction_evals(prompt_version: str) -> dict[str, Any]:
-    return {"stub": True, "prompt_version": prompt_version, "cases": 0}
+@dataclass
+class RAGCaseResult:
+    name: str
+    query_text: str
+    expected_titles: list[str]
+    found_titles: list[str]
+    hit_rank: int | None  # 1-indexed rank of the first expected title, or None
+    passed: bool
 
 
-# TODO: load ai_eval_cases where kind='rag', run pipeline, write ai_eval_runs.
-def run_rag_evals(prompt_version: str) -> dict[str, Any]:
-    return {"stub": True, "prompt_version": prompt_version, "cases": 0}
+def run_rag_evals(
+    tenant_id: str | UUID,
+    *,
+    top_k: int = 5,
+) -> dict[str, Any]:
+    """Run the golden RAG cases against the tenant's current corpus.
+
+    Failure modes worth naming:
+      - Tenant has no documents → every case fails. The CLI warns rather
+        than treating it as a regression — operator forgot to seed.
+      - Embedding provider is the stub → vectors are deterministic but
+        semantically meaningless; recall will be near-random.
+    """
+    started_at = time.time()
+    tenant_id = str(tenant_id)
+    provider = None
+    results: list[RAGCaseResult] = []
+    chunk_count = 0
+    try:
+        provider = _make_embedding_provider()
+        with conn() as c:
+            c.row_factory = dict_row
+            with c.transaction():
+                with c.cursor() as cur:
+                    cur.execute(
+                        "SELECT COUNT(*) AS n FROM document_chunks WHERE tenant_id = %s",
+                        (tenant_id,),
+                    )
+                    row = cur.fetchone()
+                    chunk_count = int((row or {}).get("n", 0))
+                    for case in GOLDEN_RAG_CASES:
+                        results.append(
+                            _run_one_rag_case(cur, tenant_id, case, provider, top_k)
+                        )
+    except Exception as exc:  # noqa: BLE001
+        write_failed_eval_run(
+            tenant_id=tenant_id,
+            kind="rag",
+            prompt_version=RAG_PROMPT_VERSION,
+            model=provider_model(provider) if provider is not None else "?",
+            total_cases=len(GOLDEN_RAG_CASES),
+            metrics={
+                "top_k": top_k,
+                "recall_at_k": 0.0,
+                "mrr": 0.0,
+                "tenant_chunk_count": chunk_count,
+                "completed_cases": len(results),
+                "cases": [asdict(r) for r in results],
+            },
+            started_at=started_at,
+            exc=exc,
+        )
+        raise
+
+    passed = sum(1 for r in results if r.passed)
+    total = len(results)
+    mrr = (
+        sum(1.0 / r.hit_rank for r in results if r.hit_rank is not None) / total
+        if total
+        else 0.0
+    )
+    recall_at_k = passed / total if total else 0.0
+
+    metrics: dict[str, Any] = {
+        "top_k": top_k,
+        "recall_at_k": recall_at_k,
+        "mrr": mrr,
+        "tenant_chunk_count": chunk_count,
+        "cases": [asdict(r) for r in results],
+    }
+    write_eval_run(
+        tenant_id=tenant_id,
+        kind="rag",
+        prompt_version=RAG_PROMPT_VERSION,
+        model=provider_model(provider),
+        total_cases=total,
+        passed=passed,
+        failed=total - passed,
+        metrics=metrics,
+        started_at=started_at,
+    )
+    log.info(
+        "rag_eval_completed",
+        tenant_id=tenant_id,
+        total=total,
+        passed=passed,
+        recall_at_k=recall_at_k,
+        mrr=mrr,
+        chunks=chunk_count,
+    )
+    return metrics
+
+def _run_one_rag_case(
+    cur, tenant_id: str, case: RAGCase, provider, top_k: int
+) -> RAGCaseResult:
+    started = time.perf_counter()
+    try:
+        vectors, metrics = provider.embed([case.query_text])
+    except Exception as exc:  # noqa: BLE001
+        log_model_call_isolated(
+            tenant_id=tenant_id,
+            job_id=None,
+            kind="embedding",
+            provider=provider_name(provider),
+            model=provider_model(provider),
+            duration_ms=int((time.perf_counter() - started) * 1000),
+            success=False,
+            cost_usd=0.0,
+            error_class=type(exc).__name__,
+            error_message=str(exc)[:1000],
+            request_meta={"eval": True, "case_name": case.name},
+        )
+        raise
+    # AGENTS.md: every provider call gets a row in ai_model_calls. Isolated
+    # logger so the eval transaction can roll back without losing the cost
+    # record — eval runs are real spend the operator should see.
+    log_model_call_isolated(
+        tenant_id=tenant_id,
+        job_id=None,
+        kind="embedding",
+        provider=metrics.provider,
+        model=metrics.model,
+        duration_ms=metrics.duration_ms,
+        success=metrics.success,
+        input_tokens=metrics.input_tokens,
+        cost_usd=metrics.cost_usd,
+        request_meta={"eval": True, "case_name": case.name},
+    )
+    if not vectors:
+        return RAGCaseResult(
+            name=case.name,
+            query_text=case.query_text,
+            expected_titles=list(case.expected_document_titles),
+            found_titles=[],
+            hit_rank=None,
+            passed=False,
+        )
+    literal = "[" + ",".join(f"{x:.7f}" for x in vectors[0]) + "]"
+    rows = hybrid_search(
+        cur,
+        tenant_id=tenant_id,
+        embedding_literal=literal,
+        query_text=case.query_text,
+        top_k=top_k,
+    )
+    found_titles: list[str] = []
+    hit_rank: int | None = None
+    expected_set = set(case.expected_document_titles)
+    for idx, row in enumerate(rows, start=1):
+        title = str(row.get("document_title", ""))
+        found_titles.append(title)
+        if hit_rank is None and title in expected_set:
+            hit_rank = idx
+    return RAGCaseResult(
+        name=case.name,
+        query_text=case.query_text,
+        expected_titles=list(case.expected_document_titles),
+        found_titles=found_titles,
+        hit_rank=hit_rank,
+        passed=hit_rank is not None,
+    )
+
+
+def run_extraction_evals(tenant_id: str | UUID) -> dict[str, Any]:
+    """Run the canonical prompt-injection cases through the live extraction
+    provider. Implementation in evals/extraction.py; this function only
+    handles persistence so all ai_eval_runs writes go through one place."""
+    started_at = time.time()
+    tenant_id = str(tenant_id)
+    try:
+        metrics, passed, total, model_name = extraction_eval.run(tenant_id)
+    except Exception as exc:  # noqa: BLE001
+        write_failed_eval_run(
+            tenant_id=tenant_id,
+            kind="extraction",
+            prompt_version=EXTRACTION_PROMPT_VERSION,
+            model="?",
+            total_cases=len(GOLDEN_EXTRACTION_INJECTION_CASES),
+            metrics={
+                "injection_resistance_rate": 0.0,
+                "completed_cases": 0,
+                "cases": [],
+            },
+            started_at=started_at,
+            exc=exc,
+        )
+        raise
+    write_eval_run(
+        tenant_id=tenant_id,
+        kind="extraction",
+        prompt_version=EXTRACTION_PROMPT_VERSION,
+        model=model_name,
+        total_cases=total,
+        passed=passed,
+        failed=total - passed,
+        metrics=metrics,
+        started_at=started_at,
+    )
+    return metrics
+
+
+def run_recs_evals(tenant_id: str | UUID) -> dict[str, Any]:
+    """Run the hostile-chunk synthesis cases through the live LLM provider.
+
+    Same structural contract as run_extraction_evals: persistence stays here
+    so all ai_eval_runs writes go through one place; the pipeline body lives
+    in evals/recommendations.py. Kind is 'recs' (added to the CHECK in
+    migration 00019).
+    """
+    started_at = time.time()
+    tenant_id = str(tenant_id)
+    try:
+        metrics, passed, total, model_name = recs_eval.run(tenant_id)
+    except Exception as exc:  # noqa: BLE001
+        write_failed_eval_run(
+            tenant_id=tenant_id,
+            kind="recs",
+            prompt_version=RECS_PROMPT_VERSION,
+            model="?",
+            total_cases=len(GOLDEN_RECS_INJECTION_CASES),
+            metrics={
+                "injection_resistance_rate": 0.0,
+                "completed_cases": 0,
+                "cases": [],
+            },
+            started_at=started_at,
+            exc=exc,
+        )
+        raise
+    write_eval_run(
+        tenant_id=tenant_id,
+        kind="recs",
+        prompt_version=RECS_PROMPT_VERSION,
+        model=model_name,
+        total_cases=total,
+        passed=passed,
+        failed=total - passed,
+        metrics=metrics,
+        started_at=started_at,
+    )
+    return metrics

@@ -11,6 +11,7 @@ from fielddesk_worker.providers.base import CallMetrics
 PROVIDER_NAME = "openai"
 DEFAULT_MODEL = "text-embedding-3-small"
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
+DEFAULT_DIMS = 1536
 
 # Pricing per 1M tokens, USD. As of mid-2026 these are the published rates;
 # refresh from the OpenAI pricing page when they change rather than guessing.
@@ -36,14 +37,18 @@ class OpenAIEmbeddingProvider:
         base_url: str = DEFAULT_BASE_URL,
         timeout_seconds: float = 60.0,
         batch_size: int = DEFAULT_BATCH_SIZE,
+        dimensions: int = DEFAULT_DIMS,
     ):
         if not api_key:
             raise ValueError("OpenAI api_key is required")
+        if dimensions <= 0:
+            raise ValueError("dimensions must be positive")
         self._api_key = api_key
         self._model = model
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout_seconds
         self._batch_size = batch_size
+        self._dimensions = dimensions
 
     @property
     def model(self) -> str:
@@ -81,6 +86,8 @@ class OpenAIEmbeddingProvider:
                     "input": batch,
                     "model": effective_model,
                 }
+                if effective_model.startswith("text-embedding-3-"):
+                    payload["dimensions"] = self._dimensions
                 response = client.post(url, headers=headers, json=payload)
                 response.raise_for_status()
                 body = response.json()
@@ -88,7 +95,14 @@ class OpenAIEmbeddingProvider:
                 # — a future minor format change should not silently scramble
                 # vectors against their input texts.
                 data = sorted(body["data"], key=lambda d: d["index"])
-                vectors.extend(d["embedding"] for d in data)
+                batch_vectors = [d["embedding"] for d in data]
+                bad_dims = [len(v) for v in batch_vectors if len(v) != self._dimensions]
+                if bad_dims:
+                    raise RuntimeError(
+                        f"embedding provider returned dimensions {bad_dims[0]}, "
+                        f"expected {self._dimensions}"
+                    )
+                vectors.extend(batch_vectors)
                 usage = body.get("usage", {})
                 total_input_tokens += int(usage.get("prompt_tokens", 0))
 

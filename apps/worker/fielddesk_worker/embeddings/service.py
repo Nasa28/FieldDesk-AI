@@ -137,6 +137,8 @@ def embed(job: dict[str, Any], cur) -> dict[str, Any]:
         )
         raise
 
+    _log_embed_call(cur, job, metrics, document_id, len(chunks))
+
     if len(vectors) != len(chunks):
         raise RuntimeError(
             f"embedding provider returned {len(vectors)} vectors for {len(chunks)} chunks"
@@ -167,7 +169,6 @@ def embed(job: dict[str, Any], cur) -> dict[str, Any]:
     update_document_status(
         cur, document_id=document_id, tenant_id=tenant_id, status="ready"
     )
-    _log_embed_call(cur, job, metrics, document_id, len(chunks))
     log.info(
         "document_embedded",
         document_id=str(document_id),
@@ -191,9 +192,8 @@ def embed(job: dict[str, Any], cur) -> dict[str, Any]:
 def _log_embed_call(
     cur, job: dict[str, Any], metrics: CallMetrics, document_id: Any, chunk_count: int
 ) -> None:
-    # Insert inside the same transaction as the chunks so a rollback drops the
-    # whole batch consistently. Cost is still recorded because the provider
-    # already billed for the embed regardless of our downstream insert.
+    # This is deliberately durable: once the provider returns, the tenant may
+    # have been billed even if downstream chunk inserts or status updates fail.
     insert_model_call(
         cur,
         tenant_id=job["tenant_id"],
@@ -207,7 +207,6 @@ def _log_embed_call(
         output_tokens=metrics.output_tokens,
         cost_usd=metrics.cost_usd,
         request_meta={"document_id": str(document_id), "chunk_count": chunk_count},
-        durable=False,
     )
 
 

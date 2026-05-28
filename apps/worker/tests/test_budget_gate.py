@@ -37,11 +37,12 @@ def _usage(**overrides) -> BudgetUsage:
 
 class BudgetGatingTests(unittest.TestCase):
     def test_gated_types_match_billed_providers(self):
-        # draft_ticket must be excluded — it's a pure DB write.
+        # draft_ticket is now the recommendation-synthesis LLM call.
         self.assertEqual(
-            BUDGET_GATED_JOB_TYPES, {"transcribe", "extract", "embed", "rag"}
+            BUDGET_GATED_JOB_TYPES,
+            {"transcribe", "extract", "embed", "rag", "draft_ticket"},
         )
-        self.assertFalse(is_budget_gated_job("draft_ticket"))
+        self.assertTrue(is_budget_gated_job("draft_ticket"))
         self.assertTrue(is_budget_gated_job("extract"))
 
     def test_should_block_only_when_paused_and_over(self):
@@ -147,9 +148,7 @@ class BudgetGatingTests(unittest.TestCase):
             mark_mock.assert_not_called()
 
     def test_non_gated_job_skips_db_entirely(self):
-        # draft_ticket should never touch the budget view — saves a query
-        # on the hot path.
-        job = {"id": "job-4", "tenant_id": "t-1", "type": "draft_ticket", "max_attempts": 5}
+        job = {"id": "job-4", "tenant_id": "t-1", "type": "noop", "max_attempts": 5}
         with patch.object(budget_mod, "read_budget_usage") as read_mock, \
              patch.object(budget_mod, "conn") as conn_mock:
             self.assertFalse(budget_mod.is_blocked(job, {}, attempt_number=1))
@@ -169,13 +168,27 @@ class BudgetGatingTests(unittest.TestCase):
         heartbeat_stop = MagicMock()
         heartbeat_thread = MagicMock()
 
-        with patch.object(queue_mod, "load_settings", return_value=settings), \
-             patch.object(queue_mod, "_claim_next_job", return_value=job), \
-             patch.object(queue_mod, "start_heartbeat", return_value=(heartbeat_stop, heartbeat_thread)), \
-             patch.object(queue_mod, "is_budget_blocked", side_effect=RuntimeError("budget view unavailable")), \
-             patch.object(queue_mod, "conn") as conn_mock, \
-             patch.object(queue_mod, "_record_attempt") as record_mock, \
-             patch.object(queue_mod, "_mark_failed_or_retry", return_value="retrying") as fail_mock:
+        with (
+            patch.object(queue_mod, "load_settings", return_value=settings),
+            patch.object(queue_mod, "_claim_next_job", return_value=job),
+            patch.object(
+                queue_mod,
+                "start_heartbeat",
+                return_value=(heartbeat_stop, heartbeat_thread),
+            ),
+            patch.object(
+                queue_mod,
+                "is_budget_blocked",
+                side_effect=RuntimeError("budget view unavailable"),
+            ),
+            patch.object(queue_mod, "conn") as conn_mock,
+            patch.object(queue_mod, "record_attempt") as record_mock,
+            patch.object(
+                queue_mod,
+                "mark_failed_or_retry",
+                return_value="retrying",
+            ) as fail_mock,
+        ):
             cm = MagicMock()
             conn_mock.return_value.__enter__.return_value = cm
 

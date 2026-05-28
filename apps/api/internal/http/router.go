@@ -63,6 +63,7 @@ func NewRouter(cfg *config.Config, db *database.DB, logger *slog.Logger, store s
 				r.Patch("/{id}", h.UpdateTicket)
 				r.Post("/{id}/approve", h.ApproveTicket)
 				r.Post("/{id}/reject", h.RejectTicket)
+				r.Get("/{id}/recommendations", h.GetTicketRecommendations)
 			})
 
 			r.Route("/documents", func(r chi.Router) {

@@ -28,8 +28,11 @@ def parse_docx(content: bytes) -> list[ParsedSegment]:
         raise ParseError(f"could not read docx: {e}") from e
 
     segments: list[ParsedSegment] = []
-    heading_stack: list[str] = []
+    headings_by_level: dict[int, str] = {}
     current_body: list[str] = []
+
+    def current_path() -> list[str]:
+        return [headings_by_level[level] for level in sorted(headings_by_level)]
 
     def flush(path: list[str]) -> None:
         body = "\n".join(current_body).strip()
@@ -41,18 +44,20 @@ def parse_docx(content: bytes) -> list[ParsedSegment]:
         text = (paragraph.text or "").strip()
         style_name = (paragraph.style.name or "") if paragraph.style else ""
         if style_name.startswith(_HEADING_STYLE_PREFIX) and text:
-            flush(heading_stack)
+            flush(current_path())
             level_str = style_name[len(_HEADING_STYLE_PREFIX):].strip()
             try:
                 level = max(1, int(level_str))
             except ValueError:
                 level = 1
-            del heading_stack[level - 1 :]
-            heading_stack.append(text)
+            for existing_level in list(headings_by_level):
+                if existing_level >= level:
+                    del headings_by_level[existing_level]
+            headings_by_level[level] = text
         else:
             if text:
                 current_body.append(text)
-    flush(heading_stack)
+    flush(current_path())
 
     # python-docx skips table cell text in the paragraph iterator; pull it
     # in as additional segments so a tables-only DOCX still produces chunks.
@@ -68,7 +73,7 @@ def parse_docx(content: bytes) -> list[ParsedSegment]:
             segments.append(
                 ParsedSegment(
                     text=joined,
-                    heading_path=list(heading_stack),
+                    heading_path=current_path(),
                     source_locator={"table_index": table_index},
                 )
             )

@@ -6,10 +6,12 @@ from typing import Any
 import structlog
 
 from fielddesk_worker.db_queries import (
+    enqueue_job,
     get_ticket_for_rag,
     hybrid_search,
     insert_model_call,
     insert_rag_query,
+    log_model_call_isolated,
 )
 from fielddesk_worker.embeddings.service import _make_provider as _make_embedding_provider
 from fielddesk_worker.providers.base import CallMetrics
@@ -56,8 +58,28 @@ def retrieve(job: dict[str, Any], cur) -> dict[str, Any]:
 
     provider = _make_embedding_provider()
     started = time.perf_counter()
-    vectors, metrics = provider.embed([query_text])
+    try:
+        vectors, metrics = provider.embed([query_text])
+    except Exception as exc:  # noqa: BLE001
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        log_model_call_isolated(
+            tenant_id=tenant_id,
+            job_id=job.get("id"),
+            kind="embedding",
+            provider=provider.name,
+            model=getattr(provider, "model", "?"),
+            duration_ms=duration_ms,
+            success=False,
+            cost_usd=0.0,
+            error_class=type(exc).__name__,
+            error_message=str(exc)[:1000],
+            request_meta={"purpose": "rag_query_embed", "query_text_preview": query_text[:200]},
+        )
+        raise
     duration_ms = int((time.perf_counter() - started) * 1000)
+    # Cost attribution: one durable ai_model_calls row for the embedding. Log
+    # before DB retrieval so a later SQL failure cannot erase a provider call.
+    _log_embed_call(cur, job, metrics, query_text)
     if not vectors:
         raise RuntimeError("embedding provider returned no vector for the query")
 
@@ -72,10 +94,6 @@ def retrieve(job: dict[str, Any], cur) -> dict[str, Any]:
     )
     results = [_clean_result_row(r) for r in raw_results]
 
-    # Cost attribution: one ai_model_calls row for the embedding (the
-    # retrieval itself is plain Postgres, no provider charge).
-    _log_embed_call(cur, job, metrics, query_text)
-
     rag_query_id = insert_rag_query(
         cur,
         tenant_id=tenant_id,
@@ -87,6 +105,24 @@ def retrieve(job: dict[str, Any], cur) -> dict[str, Any]:
         cost_usd=metrics.cost_usd,
         duration_ms=duration_ms,
     )
+
+    # Phase 4.5: auto-enqueue the synthesis step for ticket-bound retrievals.
+    # Ad-hoc /v1/rag/search calls (no ticket_id) don't get synthesized — there's
+    # no ticket to attach recs to. Idempotency key includes the rag_query_id so
+    # re-running rag on the same ticket produces one synthesis per retrieval
+    # rather than spawning duplicates that overwrite each other's cost rows.
+    if ticket_id_raw:
+        enqueue_job(
+            cur,
+            tenant_id=tenant_id,
+            type_="draft_ticket",
+            payload={
+                "ticket_id": str(ticket_id_raw),
+                "rag_query_id": str(rag_query_id),
+                "source": "auto",
+            },
+            idempotency_key=f"recs:rag_query:{rag_query_id}",
+        )
 
     log.info(
         "rag_retrieval",
@@ -162,5 +198,4 @@ def _log_embed_call(
             "purpose": "rag_query_embed",
             "query_text_preview": query_text[:200],
         },
-        durable=False,
     )

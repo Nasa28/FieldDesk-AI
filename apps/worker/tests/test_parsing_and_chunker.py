@@ -18,6 +18,13 @@ try:
 except ModuleNotFoundError as exc:
     raise unittest.SkipTest(f"worker dependencies are not installed: {exc.name}") from exc
 
+try:
+    import tiktoken  # noqa: F401
+
+    _HAS_TIKTOKEN = True
+except ModuleNotFoundError:
+    _HAS_TIKTOKEN = False
+
 
 class TextParserTests(unittest.TestCase):
     def test_strips_whitespace_and_returns_one_segment(self):
@@ -89,6 +96,7 @@ class MarkdownParserTests(unittest.TestCase):
         self.assertIn(["Section B"], paths)
 
 
+@unittest.skipUnless(_HAS_TIKTOKEN, "tiktoken is not installed")
 class ChunkerTests(unittest.TestCase):
     def test_short_segment_passes_through_unchanged(self):
         segments = [

@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { RelatedDocuments } from "../../components/related-documents";
+import { TicketRecommendations } from "../../components/ticket-recommendations";
 import { api, currentTenantId, saveTenantId } from "../../lib/api";
 
 type Ticket = {
@@ -211,6 +213,8 @@ export default function TicketsPage() {
                 <span>Description</span>
                 <textarea value={draft.detailed_description} onChange={(e) => updateDraft(ticket.id, { detailed_description: e.target.value })} />
               </label>
+              <RelatedDocuments ticketId={ticket.id} />
+              <TicketRecommendations ticketId={ticket.id} />
             </div>
           );
         })}

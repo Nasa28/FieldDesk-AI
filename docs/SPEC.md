@@ -51,6 +51,7 @@ Migrations live in `infra/migrations/` and run via Goose.
 - `ai_model_calls` — every provider call (cost, tokens, latency, success).
 - `documents`, `document_chunks` — knowledge base; chunks have `vector(1536)` embeddings.
 - `rag_queries` — retrieval results per ticket.
+- `ticket_recommendations` — synthesized recs per retrieval (suggested parts, safety, follow-ups, citations).
 - `human_reviews` — review queue + corrections.
 - `ai_eval_cases`, `ai_eval_runs` — golden set + run results.
 - `tenant_ai_budgets` — per-tenant cost limits.
@@ -65,7 +66,7 @@ Job types (see `apps/worker/fielddesk_worker/jobs/__init__.py`):
 - `extract` — transcript → ai_extraction → ticket draft.
 - `embed` — document → document_chunks.
 - `rag` — ticket → rag_query.
-- `draft_ticket` — ai_extraction → job_ticket row.
+- `draft_ticket` — ticket + rag_query → ticket_recommendations (RAG synthesis).
 
 Job lifecycle: `pending → processing → (succeeded | failed | retrying | needs_review)`.
 

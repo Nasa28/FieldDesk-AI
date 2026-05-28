@@ -79,13 +79,15 @@ def is_retryable_exception(exc: Exception) -> bool:
 
 
 def is_reviewable_job(job_type: str) -> bool:
-    return job_type in {"transcribe", "extract"}
+    return job_type in {"transcribe", "extract", "embed", "rag", "draft_ticket"}
 
 
-# Jobs whose handlers will call a paid AI provider. draft_ticket is a pure DB
-# write (no provider call) so it is exempt from budget pre-flight — blocking
-# it would only delay catching up on existing extractions.
-BUDGET_GATED_JOB_TYPES = frozenset({"transcribe", "extract", "embed", "rag"})
+# Jobs whose handlers will call a paid AI provider. Post-Phase-4.5,
+# draft_ticket is the RAG-synthesis LLM call (not the no-op stub it used to
+# be), so it joins the gated set — letting it run past a budget cap would
+# spend real money on recs that nobody will see if the rest of the queue
+# is blocked anyway.
+BUDGET_GATED_JOB_TYPES = frozenset({"transcribe", "extract", "embed", "rag", "draft_ticket"})
 
 
 def is_budget_gated_job(job_type: str) -> bool:
@@ -170,8 +172,9 @@ def insert_failure_review(
     cur.execute(
         """
         INSERT INTO human_reviews
-            (tenant_id, ai_job_id, voice_note_id, transcript_id, reason, notes)
-        SELECT %s, %s, %s, %s, 'fallback', %s
+            (tenant_id, job_ticket_id, ai_job_id, voice_note_id,
+             transcript_id, reason, notes)
+        SELECT %s, %s, %s, %s, %s, 'fallback', %s
         WHERE NOT EXISTS (
             SELECT 1 FROM human_reviews
             WHERE tenant_id = %s
@@ -181,6 +184,7 @@ def insert_failure_review(
         """,
         (
             job["tenant_id"],
+            payload.get("ticket_id"),
             job["id"],
             payload.get("voice_note_id"),
             payload.get("transcript_id"),

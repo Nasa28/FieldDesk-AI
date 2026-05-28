@@ -11,6 +11,149 @@ production team." See `docs/PRD.md` and `AGENTS.md` for the rules of the road.
 
 ## Status
 
+**Phase 4.5 (RAG synthesis backend) implemented.** Retrieved chunks now feed
+a structured LLM synthesis call that produces ticket-specific recommendations
+(possible diagnosis, suggested parts, safety checklist, follow-up questions,
+citations). The `draft_ticket` job type, previously a stub, is now the
+synthesis handler: it auto-enqueues after every ticket-bound `rag` job using
+the rag_query id as its idempotency key, calls `LLMProvider.complete_json`
+with `RECS_SYSTEM_PROMPT`, and persists a `ticket_recommendations` row.
+
+Key safety properties:
+
+- Ticket summary and retrieved chunks are fed through untrusted-data wrappers
+  (`<ticket>` and `<chunk>`), using the same HTML-escape + delimiter
+  discipline as transcripts. The system prompt explicitly says that text
+  inside those tags is data, never instructions.
+- Per-chunk text capped at 1200 chars; max 8 chunks per synthesis. Caps
+  blast radius on top of retrieval's top-k.
+- Zero-chunk retrievals short-circuit: a `ticket_recommendations` row with
+  `insufficient_context=true` is written with no LLM call, no spend.
+- Invalid JSON from the model persists a degraded row (`json_valid=false`,
+  `insufficient_context=true`) rather than silently dropping the synthesis.
+- `draft_ticket` joined `BUDGET_GATED_JOB_TYPES`. A budget-exceeded synthesis
+  routes to `human_reviews` like every other paid AI job.
+
+The `kind='recs'` eval suite adds hostile ticket/chunk cases: ticket-summary
+override, fake-part breakout via tag-injection, dangerous safety-checklist
+override, and an empty-chunks-must-say-so case. Run with
+`python -m fielddesk_worker.evals --tenant <uuid> --kind recs`. Migration
+00019 extends `ai_eval_runs.kind` to include `recs`.
+
+API: `GET /v1/tickets/{id}/recommendations` returns a denormalized,
+citation-enriched view. The handler joins each citation's `chunk_id` against
+the `rag_query.results` that drove the synthesis and attaches
+`document_title`, `heading_path`, and `source_page`; hallucinated chunk_ids
+(ones the model emitted that weren't in the retrieval set) are dropped
+server-side so the wire shape never carries unattributable citations. 404
+surfaces as "synthesis pending" rather than an error. Pure-function tests in
+`recommendations_test.go` cover the enrichment join, hallucination drop,
+zero-blob-confidence fallback to the row column, and bad-JSON degradation.
+
+**Phase 4.5 (web UI) implemented.** Each ticket card on `/tickets` now
+shows a "Suggestions" section below "Related documents." The component
+surfaces the three states the worker writes deliberately so an operator
+sees *why* a card looks empty: bad-JSON degradation (`json_valid=false`
+with the error_message rendered prominently), insufficient context
+(`insufficient_context=true` with the worker's `notes` shown verbatim),
+and the still-pending case (404 — same pattern as RelatedDocuments). Confidence is
+displayed in a colored bucket (high/medium/low). Plain-text rendering only;
+no `dangerouslySetInnerHTML` despite ingesting tenant-document content
+through the LLM.
+
+**Phase 4b (web UI) implemented.** The Documents page now drives the full
+upload handshake (create → presigned PUT → confirm) with title input,
+mime-from-extension normalization (browsers report markdown inconsistently),
+status badges with parse_error display, and delete. Each ticket card on
+`/tickets` now shows a "Related documents" section that reads
+`GET /v1/rag/queries/by-ticket/{id}` and renders chunks with their
+document title, heading path, page number, and per-channel rank.
+A 404 surface (rag job still queued) shows a pending state with a
+manual Refresh, not a red error.
+
+**Phase 4c (eval CLI) implemented.** Run with:
+
+```bash
+python -m fielddesk_worker.evals --tenant <uuid> --kind all
+```
+
+Two suites, both writing one row to `ai_eval_runs`:
+
+- **rag**: 5 golden `(query, expected_document_titles)` cases. Reports
+  `recall@5` and `MRR` (Voorhees 1999). Score is on document-title
+  overlap because chunk ids vary across re-ingest. Logs each query
+  embedding to `ai_model_calls` with `request_meta.eval = true` so
+  eval spend appears in the cost dashboard, optionally filterable.
+- **extraction (injection)**: 3 canonical attack transcripts —
+  tag-breakout (`</transcript><system>...</system>`), plain
+  "ignore previous instructions" override, and persona-swap. Each
+  case names a planted phone number / customer name the attacker
+  is trying to exfiltrate; a pass means the hardened prompt held
+  (no planted value, `human_review_required = true` when the case
+  demands it). Reports `injection_resistance_rate`.
+
+CLI exit code is non-zero when either suite drops below 50% pass.
+
+**Dogfood: seed the corpus, then run the eval.** The rag eval scores against
+the 5 document titles in `evals/golden.py:SEED_DOCUMENT_TITLES`; without
+those documents uploaded, `recall@5 = 0` and the numbers are noise.
+Markdown content lives at [infra/seed_corpus/](fielddesk-ai/infra/seed_corpus/)
+— real-feeling SOPs / safety procedures / parts catalog written so the
+lexical and dense retrieval channels both have something to grip.
+
+```bash
+docker compose up -d           # if not already running
+TENANT=$(./scripts/seed.sh)    # creates the demo tenant, prints its uuid
+./scripts/seed-corpus.sh "$TENANT" http://localhost:8080 --wait
+./scripts/eval.sh "$TENANT" all
+```
+
+`--wait` polls until every document hits `status='ready'` (or `failed`) so
+the eval doesn't race the embed jobs. Without it, the script returns right
+after enqueueing and you have to wait ~10-30 seconds yourself.
+
+Before any of that hits a live stack, [test_seed_corpus.py](fielddesk-ai/apps/worker/tests/test_seed_corpus.py)
+exercises the parser + chunker against each markdown file (no DB, no
+OpenAI): every doc must parse into multiple segments, carry heading paths
+that survive chunking, and produce unique content hashes per chunk. If the
+content_hash check trips, the partial UNIQUE on (document_id, content_hash)
+would silently drop chunks at insert time and the operator would lose
+content without an error.
+
+**Two ways to run the eval on a schedule:**
+
+1. **Docker-compose sidecar** — opt-in via the `evals` profile so the
+   default stack doesn't burn API credits on every `up`:
+
+   ```bash
+   # Set in .env first: EVALS_TENANT_ID=<uuid>, EVALS_INTERVAL_SECONDS=86400
+   docker compose --profile evals up -d evals
+   docker compose logs -f evals   # watch a run
+   ```
+
+   The sidecar reuses the worker image, sleeps `EVALS_INTERVAL_SECONDS`
+   between runs, and `|| true`s a single failed eval so a transient
+   OpenAI 5xx doesn't pull docker into its restart-backoff. Runtime failures
+   still land in `ai_eval_runs` with `passed=0` when Postgres is reachable.
+2. **Host crontab** — see [infra/cron/evals.crontab](infra/cron/evals.crontab)
+   for the template. Defaults to 03:17 UTC nightly (deliberately off-the-
+   hour to avoid the synchronized-cron rate-limit spike). MAILTO catches
+   the non-zero exit so a regression actually surfaces.
+
+Either path runs [scripts/eval.sh](scripts/eval.sh), the wrapper
+around the CLI. On a host checkout it uses `apps/worker/.venv/bin/python` when
+that venv exists; inside Docker it uses the installed worker package.
+
+**Shared prompt-safety helpers.**
+[apps/worker/fielddesk_worker/prompting/safety.py](apps/worker/fielddesk_worker/prompting/safety.py)
+now centralizes `wrap_untrusted_transcript` and `wrap_untrusted_chunk(id, text)`.
+The extraction provider was refactored to use the shared transcript wrapper.
+The chunk wrapper is in place ahead of the RAG synthesis layer (Phase 4.5) so
+synthesis prompts inherit the same HTML-escape + delimiter discipline AGENTS.md
+mandates. Hostile chunk ids get replaced wholesale with underscores rather than
+partial substitution, to prevent attribute-escape attacks. 8 tests cover the
+canonical injection payloads for both transcripts and chunks.
+
 **Phase 4 (RAG) backend implemented.** Documents now upload, parse, chunk,
 embed, and search end-to-end via a hybrid (dense + lexical) retrieval
 recipe grounded in mid-2026 production practice.
@@ -59,10 +202,10 @@ recipe grounded in mid-2026 production practice.
   trying after baseline eval; adds Anthropic dependency to ingest.
 - OCR for scanned PDFs, encrypted PDF unlocking, `.doc`, PPTX, structured
   table extraction.
-- Web UI: documents page (upload + list), ticket-detail "Related
-  documents" section. These come in Phase 4b.
-- RAG eval gold set (recall@5, MRR). Skeleton table exists
-  (`ai_eval_runs`); runner is Phase 4c.
+- Indirect prompt-injection mitigation for future RAG synthesis. Retrieved
+  chunks are storage/UI-only today; before any LLM synthesis layer ships
+  (Phase 4.5), chunk prompts must use untrusted-content delimiters and
+  citation requirements.
 
 **Phase 3 bullet 5 (tenant budgets) implemented.**
 `PUT /v1/admin/budgets` upserts the tenant's daily / monthly / per-ticket
@@ -292,9 +435,12 @@ EXTRACTION_MODEL=gpt-4o-mini
 OPENAI_API_KEY=sk-...
 ```
 
-The worker `POST`s the transcript text plus a fixed system prompt to
+The worker `POST`s the transcript text, XML-escaped inside
+`<transcript>...</transcript>` tags, plus a fixed system prompt to
 `https://api.openai.com/v1/chat/completions` with `response_format=json_object`
-and `temperature=0`. The response is parsed and validated against
+and `temperature=0`. The system prompt tells the model that transcript content
+is untrusted data to extract from, not instructions to follow. The response is
+parsed and validated against
 `TicketExtraction` (Pydantic).
 
 Cost is computed from the response's `usage.prompt_tokens` and

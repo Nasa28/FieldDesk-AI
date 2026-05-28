@@ -30,8 +30,11 @@ def handle_job(job: dict[str, Any], cur) -> dict[str, Any]:
 
         return retrieve(job, cur)
     if job_type is JobType.DRAFT_TICKET:
-        from fielddesk_worker.extraction.service import draft_ticket
+        # Phase 4.5: draft_ticket is the RAG-synthesis step. The Phase-2 stub
+        # in extraction/service.py is left for backward-compat tests only;
+        # production dispatch goes through recommendations/service.synthesize.
+        from fielddesk_worker.recommendations.service import synthesize
 
-        return draft_ticket(job, cur)
+        return synthesize(job, cur)
 
     raise ValueError(f"unknown job type: {job_type}")

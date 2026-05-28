@@ -32,12 +32,14 @@ def parse_markdown(content: bytes) -> list[ParsedSegment]:
 
     lines = text.splitlines()
     segments: list[ParsedSegment] = []
-    # heading_stack[i] = heading text at level i+1 (1-indexed). Length tracks
-    # the current depth; assigning a new heading at level N truncates anything
-    # deeper.
-    heading_stack: list[str] = []
+    # Preserve actual heading levels. A document can start at H2; that should
+    # not make later H2 headings children of the first H2.
+    headings_by_level: dict[int, str] = {}
     current_body: list[str] = []
     in_fence = False
+
+    def current_path() -> list[str]:
+        return [headings_by_level[level] for level in sorted(headings_by_level)]
 
     def flush(path: list[str]) -> None:
         body = "\n".join(current_body).strip()
@@ -56,13 +58,15 @@ def parse_markdown(content: bytes) -> list[ParsedSegment]:
         m = _HEADING_RE.match(line)
         if m:
             # Persist the section accumulated before this heading.
-            flush(heading_stack)
+            flush(current_path())
             level = len(m.group(1))
             title = m.group(2).strip()
             # Truncate stack to the new heading's parent, then push.
-            del heading_stack[level - 1 :]
-            heading_stack.append(title)
+            for existing_level in list(headings_by_level):
+                if existing_level >= level:
+                    del headings_by_level[existing_level]
+            headings_by_level[level] = title
         else:
             current_body.append(line)
-    flush(heading_stack)
+    flush(current_path())
     return segments

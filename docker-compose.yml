@@ -125,6 +125,55 @@ services:
       WORKER_MAX_CONCURRENT_JOBS: ${WORKER_MAX_CONCURRENT_JOBS}
       WORKER_MAX_RETRIES: ${WORKER_MAX_RETRIES}
 
+  # Opt-in sidecar that runs the Phase 4c eval CLI on an interval. Enable
+  # with `docker compose --profile evals up evals`. Defaults to a 24h
+  # interval; set EVALS_INTERVAL_SECONDS=3600 for hourly during development.
+  # Set EVALS_TENANT_ID to the tenant whose corpus + extraction prompt
+  # you want measured. The container reuses the worker image (same deps,
+  # same code) so there's no second Dockerfile to maintain.
+  evals:
+    profiles: ["evals"]
+    build:
+      context: .
+      dockerfile: infra/docker/worker.Dockerfile
+    container_name: fielddesk-evals
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      EXTRACTION_PROVIDER: ${EXTRACTION_PROVIDER}
+      EXTRACTION_MODEL: ${EXTRACTION_MODEL}
+      LLM_PROVIDER: ${LLM_PROVIDER}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      EVALS_TENANT_ID: ${EVALS_TENANT_ID}
+      EVALS_INTERVAL_SECONDS: ${EVALS_INTERVAL_SECONDS:-86400}
+      EVALS_KIND: ${EVALS_KIND:-all}
+    # `|| true` prevents a single failing eval (e.g. an OpenAI 5xx, or a
+    # transient pgvector index miss) from killing the loop and pulling
+    # the sidecar into compose's restart-loop backoff. Runtime failures
+    # land in ai_eval_runs with pass=0 when Postgres is reachable;
+    # cron-style alerting is the right place to escalate, not docker
+    # restart behavior.
+    command:
+      - /bin/sh
+      - -c
+      - |
+        if [ -z "$$EVALS_TENANT_ID" ]; then
+          echo "EVALS_TENANT_ID is required" >&2
+          exit 64
+        fi
+        while true; do
+          echo "[evals] running kind=$$EVALS_KIND tenant=$$EVALS_TENANT_ID"
+          ./scripts/eval.sh "$$EVALS_TENANT_ID" "$$EVALS_KIND" || true
+          sleep "$$EVALS_INTERVAL_SECONDS"
+        done
+    restart: unless-stopped
+
   web:
     build:
       context: .

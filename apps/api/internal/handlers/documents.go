@@ -230,6 +230,10 @@ func (h *Handlers) DocumentUploaded(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "invalid_state", "document has no upload target")
 		return
 	}
+	if d.MimeType == nil {
+		writeError(w, http.StatusConflict, "invalid_state", "document has no mime_type")
+		return
+	}
 
 	info, err := h.storage.Stat(r.Context(), *d.ObjectKey)
 	if err != nil {
@@ -240,6 +244,10 @@ func (h *Handlers) DocumentUploaded(w http.ResponseWriter, r *http.Request) {
 	if !info.Exists {
 		writeError(w, http.StatusConflict, "not_uploaded",
 			"object not found in storage; upload via the presigned URL first")
+		return
+	}
+	if err := validateUploadedDocument(d, info); err != nil {
+		writeError(w, http.StatusConflict, "upload_mismatch", err.Error())
 		return
 	}
 
@@ -292,4 +300,19 @@ func derefString(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+func validateUploadedDocument(d database.Document, info storage.ObjectInfo) error {
+	if d.SizeBytes != nil && info.Size != *d.SizeBytes {
+		return fmt.Errorf("uploaded object size %d does not match declared size %d", info.Size, *d.SizeBytes)
+	}
+	if info.ContentType == "" || d.MimeType == nil {
+		return nil
+	}
+	got := strings.ToLower(strings.TrimSpace(strings.Split(info.ContentType, ";")[0]))
+	want := strings.ToLower(strings.TrimSpace(*d.MimeType))
+	if got != "" && want != "" && got != want {
+		return fmt.Errorf("uploaded object content type %q does not match declared mime_type %q", got, want)
+	}
+	return nil
 }

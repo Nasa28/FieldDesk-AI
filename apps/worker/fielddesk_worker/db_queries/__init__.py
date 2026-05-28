@@ -20,6 +20,10 @@ from fielddesk_worker.db_queries.rag import (
     hybrid_search,
     insert_rag_query,
 )
+from fielddesk_worker.db_queries.recommendations import (
+    get_ticket_with_latest_rag,
+    insert_ticket_recommendation,
+)
 from fielddesk_worker.db_queries.tenant_budgets import BudgetUsage, read_budget_usage
 from fielddesk_worker.db_queries.transcripts import get_transcript, insert_transcript
 from fielddesk_worker.db_queries.voice_notes import (
@@ -33,6 +37,7 @@ __all__ = [
     "enqueue_job",
     "get_document_for_update",
     "get_ticket_for_rag",
+    "get_ticket_with_latest_rag",
     "get_transcript",
     "get_voice_note_for_update",
     "hybrid_search",
@@ -42,6 +47,7 @@ __all__ = [
     "insert_job_ticket_from_extraction",
     "insert_model_call",
     "insert_rag_query",
+    "insert_ticket_recommendation",
     "insert_transcript",
     "link_extraction_to_ticket",
     "log_model_call_isolated",

@@ -26,6 +26,13 @@ For each case the runner produces a `TicketExtraction` and computes:
 - **Human correction rate**: from production data, fraction of fields a human edited after AI extraction.
   - Tracked from `human_reviews.correction` diffs against the original `ai_extractions.parsed_output`.
 
+### Required Security Cases
+
+The Phase 4c extraction golden set must include prompt-injection transcripts,
+tagged with `["prompt-injection"]`, that try to override the schema,
+confidence, `human_review_required`, or output format. Expected outputs should
+preserve the real ticket facts and must not follow those embedded instructions.
+
 ## 2. RAG Evals
 
 Each `ai_eval_cases` row of kind `rag` has:
@@ -41,6 +48,20 @@ Metrics:
 - **Answer groundedness**: when we generate an answer, fraction of claims that map to a retrieved chunk (LLM-judged).
 - **Citation presence**: every generated suggestion cites at least one chunk id.
 - **Human usefulness rating**: dispatchers rate suggestions 1–5; we aggregate the average.
+
+### Required Security Cases
+
+Phase 4.5 introduced a synthesis layer (`draft_ticket` job, `kind='recs'`
+runs) that ingests ticket text and retrieved chunks into an LLM call. The recs golden set
+in `evals/golden.py:GOLDEN_RECS_INJECTION_CASES` covers indirect prompt
+injection: hostile ticket or chunk text that tries to plant fake parts into
+`suggested_parts`, override `safety_checklist` entries, or coerce
+`insufficient_context=false` on thin-context tickets. Each case names a
+forbidden string; a pass means the string does NOT appear in the synthesis
+output and the safety/context flags hold.
+
+Run the recs suite alongside RAG retrieval evals:
+`python -m fielddesk_worker.evals --tenant <uuid> --kind recs`.
 
 ## 3. Operational Evals (live, not golden)
 
