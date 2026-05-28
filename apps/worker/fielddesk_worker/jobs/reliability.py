@@ -89,9 +89,20 @@ def is_reviewable_job(job_type: str) -> bool:
 # is blocked anyway.
 BUDGET_GATED_JOB_TYPES = frozenset({"transcribe", "extract", "embed", "rag", "draft_ticket"})
 
+# Subset of BUDGET_GATED_JOB_TYPES whose payload carries a ticket_id at
+# pickup time, so the per-ticket cap is something the pre-flight can
+# actually check. transcribe and extract don't qualify because the ticket
+# doesn't exist yet (extract creates it); embed is for document chunks,
+# not tickets.
+PER_TICKET_GATED_JOB_TYPES = frozenset({"rag", "draft_ticket"})
+
 
 def is_budget_gated_job(job_type: str) -> bool:
     return job_type in BUDGET_GATED_JOB_TYPES
+
+
+def is_per_ticket_gated_job(job_type: str) -> bool:
+    return job_type in PER_TICKET_GATED_JOB_TYPES
 
 
 def mark_budget_blocked(
@@ -101,14 +112,21 @@ def mark_budget_blocked(
     attempt_number: int,
     worker_id: str,
     detail: str,
+    reason: str = "budget_exceeded",
 ) -> None:
-    """Route a budget-blocked job to human review without calling its handler.
+    """Route a cost-capped job to human review without calling its handler.
 
     Why a separate function (not raising into the normal failure path): going
-    through retry/backoff for a budget cap would burn retry budget pointlessly
+    through retry/backoff for a cost cap would burn retry budget pointlessly
     — the cap won't lift on its own. We mark the job needs_review immediately,
     record an attempt audit row, surface it in the unified failure feed, and
     create a human_reviews row so the operator sees *why* the job stopped.
+
+    `reason` selects which review category the block is filed under:
+      - 'budget_exceeded' — daily/monthly tenant cap tripped (legacy default).
+      - 'cost_cap_exceeded' — per-ticket cap tripped (max_cost_per_ticket).
+    Both reasons must be allowed by the human_reviews CHECK constraint
+    (see migrations 00016 + 00022).
     """
     cur.execute(
         """
@@ -116,7 +134,7 @@ def mark_budget_blocked(
         SET status = 'needs_review',
             finished_at = now(),
             updated_at = now(),
-            error_class = 'budget_exceeded',
+            error_class = %s,
             error_message = %s,
             locked_by = NULL,
             lease_expires_at = NULL
@@ -125,7 +143,7 @@ def mark_budget_blocked(
           AND locked_by = %s
           AND status = 'processing'
         """,
-        (detail, job["id"], job["tenant_id"], worker_id),
+        (reason, detail, job["id"], job["tenant_id"], worker_id),
     )
     if cur.rowcount != 1:
         raise LostLeaseError(
@@ -136,15 +154,15 @@ def mark_budget_blocked(
         INSERT INTO ai_job_attempts
             (job_id, attempt_number, status, error_class, error_message,
              duration_ms, started_at, finished_at)
-        VALUES (%s, %s, 'failed', 'budget_exceeded', %s, 0, now(), now())
+        VALUES (%s, %s, 'failed', %s, %s, 0, now(), now())
         """,
-        (job["id"], attempt_number, detail),
+        (job["id"], attempt_number, reason, detail),
     )
     cur.execute(
         """
         INSERT INTO human_reviews
             (tenant_id, ai_job_id, voice_note_id, transcript_id, reason, notes)
-        SELECT %s, %s, %s, %s, 'budget_exceeded', %s
+        SELECT %s, %s, %s, %s, %s, %s
         WHERE NOT EXISTS (
             SELECT 1 FROM human_reviews
             WHERE tenant_id = %s
@@ -157,6 +175,7 @@ def mark_budget_blocked(
             job["id"],
             payload.get("voice_note_id"),
             payload.get("transcript_id"),
+            reason,
             detail,
             job["tenant_id"],
             job["id"],

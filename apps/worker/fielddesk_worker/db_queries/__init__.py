@@ -7,6 +7,7 @@ from fielddesk_worker.db_queries.ai_model_calls import (
     backstamp_model_call_ticket_id,
     insert_model_call,
     log_model_call_isolated,
+    read_ticket_spend,
 )
 from fielddesk_worker.db_queries.documents import (
     delete_existing_chunks,
@@ -54,6 +55,7 @@ __all__ = [
     "link_extraction_to_ticket",
     "log_model_call_isolated",
     "read_budget_usage",
+    "read_ticket_spend",
     "update_document_status",
     "update_voice_note_status",
 ]

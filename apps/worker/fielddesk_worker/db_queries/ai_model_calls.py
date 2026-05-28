@@ -122,6 +122,43 @@ def log_model_call_isolated(
         log.warning("model_call_isolated_log_failed", error=str(exc))
 
 
+def read_ticket_spend(
+    cur,
+    *,
+    tenant_id: str | UUID,
+    ticket_id: str | UUID,
+) -> float:
+    """Total ai_model_calls cost attributed to a single ticket so far.
+
+    Used by the max_cost_per_ticket pre-flight: if the next job for this
+    ticket would push spend over the cap, the budget gate routes it to
+    needs_review instead. Includes failed calls because failed provider
+    calls still cost money (same posture as the daily/monthly view).
+
+    Hits the (tenant_id, ticket_id) partial index added in migration 00021,
+    so it's a single index scan even on large tenants.
+    """
+    cur.execute(
+        """
+        SELECT COALESCE(SUM(cost_usd), 0)::numeric(14, 6)
+        FROM ai_model_calls
+        WHERE tenant_id = %s
+          AND ticket_id = %s
+        """,
+        (str(tenant_id), str(ticket_id)),
+    )
+    row = cur.fetchone()
+    if row is None:
+        return 0.0
+    # psycopg returns Numeric as Decimal by default; coerce to float for the
+    # comparison with the float-typed max_cost_per_ticket dataclass field.
+    if isinstance(row, dict):
+        value = next(iter(row.values()))
+    else:
+        value = row[0]
+    return float(value or 0.0)
+
+
 def backstamp_model_call_ticket_id(
     cur,
     *,
