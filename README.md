@@ -141,7 +141,13 @@ Two suites, both writing one row to `ai_eval_runs`:
   (no planted value, `human_review_required = true` when the case
   demands it). Reports `injection_resistance_rate`.
 
-CLI exit code is non-zero when either suite drops below 50% pass.
+CLI exit code is non-zero when any requested suite misses the stability gates:
+RAG `recall@1 >= 0.90`, RAG `recall@K = 1.0`, extraction injection
+resistance `= 1.0`, and recs injection resistance `= 1.0` by default.
+Override with `--min-rag-recall-at-1`, `--min-rag-recall-at-k`,
+`--min-extraction-injection-resistance`, or
+`--min-recs-injection-resistance` only when intentionally running a looser
+experiment.
 
 **Dogfood: seed the corpus, then run the eval.** The rag eval scores against
 the 5 document titles in `evals/golden.py:SEED_DOCUMENT_TITLES`; without
@@ -161,24 +167,47 @@ TENANT=$(./scripts/seed.sh)    # creates the demo tenant, prints its uuid
 the eval doesn't race the embed jobs. Without it, the script returns right
 after enqueueing and you have to wait ~10-30 seconds yourself.
 
-**Measured baseline (against live OpenAI `text-embedding-3-small`,
-2026-05-28, n=12 cases):**
+**Measured baseline (live OpenAI `text-embedding-3-small`, n=12, 2026-05-28):**
 
-| metric | value | what it tracks |
+| metric | hybrid_search only | + Voyage rerank-2.5-lite |
 | --- | --- | --- |
-| `recall@1` | **0.917** | primary headline — the right doc as the top result |
-| `recall@3` | 1.000 | saturated — see note below |
-| `recall@5` | 1.000 | saturated — corpus has 5 docs, k=5 |
-| `MRR` | 0.958 | average reciprocal rank of the first hit |
+| `recall@1` | 0.917 | **1.000** |
+| `recall@3` | 1.000 | 1.000 |
+| `recall@5` | 1.000 | 1.000 |
+| `MRR` | 0.958 | **1.000** |
 
 `recall@5` is structurally saturated whenever `corpus_size <= top_k` —
-every case can find its doc somewhere in the returned list. The
-discriminating metric on this corpus is `recall@1`: one case
-(`rag.warranty.paraphrase_solder_redo`, asking about a soldered joint
-springing a leak a year later) lands at rank 2 because the dense
-channel ties the warranty doc with the parts catalog. That's the
-exact shape of failure reranking is built to fix; a future rerank
-slice should show `recall@1 = 1.0` if it's helping.
+every case can find its doc somewhere in the returned list, so the
+discriminating metric on this corpus is `recall@1`.
+
+**Rerank fixed the stubborn case.** Without rerank, `rag.warranty.paraphrase_solder_redo`
+(asking about a soldered joint that started leaking a year later) lands
+at rank 2 — the Parts Catalog's tight "Lead-free solder, 1/2 lb roll"
+chunk out-competes the warranty doc's "Lifetime on workmanship defects
+— if a joint we soldered fails…" sentence, which is buried in a longer
+warranty paragraph and has weaker chunk-level vector similarity. Voyage
+rerank-2.5-lite, given the full chunk text and query together, correctly
+ranks the warranty chunk at 1 (relevance score 0.78 vs 0.45 for the
+runner-up). Total rerank cost for all 12 cases: ~$0.0006 (well inside
+Voyage's 200M-token free tier).
+
+**Two real bugs were caught during this measurement and worth flagging:**
+
+1. The rerank helper initially read the wrong dict key (`chunk_text` vs
+   the actual SQL column `text`), so for several runs the reranker was
+   silently scoring empty strings. Single-character fix in
+   [retrieval.py](fielddesk-ai/apps/worker/fielddesk_worker/rag/retrieval.py)
+   plus a comment so it doesn't recur. Lesson: when a measured
+   intervention produces *identical* numbers, suspect a wiring bug
+   before suspecting null result.
+
+2. Voyage's free tier (no payment method on file) caps at 3 RPM, which
+   the 12-case eval blew through in ~15 seconds — 9 of 12 calls returned
+   429 and silently degraded to hybrid_search ordering. Added tenacity
+   exponential-backoff retry (4s/8s/16s/32s, max 4 attempts) in
+   [voyage.py](fielddesk-ai/apps/worker/fielddesk_worker/reranking/voyage.py)
+   so the eval works on free tier (slow — ~4 min) and production stays
+   robust against the same shape of 429 from any provider.
 
 The golden set has three categories (n=12 total):
 

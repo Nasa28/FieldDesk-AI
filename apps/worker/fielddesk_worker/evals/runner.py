@@ -26,7 +26,7 @@ import structlog
 from psycopg.rows import dict_row
 
 from fielddesk_worker.db import conn
-from fielddesk_worker.db_queries import hybrid_search, log_model_call_isolated
+from fielddesk_worker.db_queries import log_model_call_isolated
 from fielddesk_worker.embeddings.service import _make_provider as _make_embedding_provider
 from fielddesk_worker.evals import extraction as extraction_eval
 from fielddesk_worker.evals import recommendations as recs_eval
@@ -42,6 +42,7 @@ from fielddesk_worker.prompts import (
     DEFAULT_EXTRACTION_PROMPT_VERSION,
     extraction_prompt_hash,
 )
+from fielddesk_worker.rag.retrieval import retrieve_with_optional_rerank
 
 log = structlog.get_logger()
 
@@ -218,13 +219,38 @@ def _run_one_rag_case(
             passed=False,
         )
     literal = "[" + ",".join(f"{x:.7f}" for x in vectors[0]) + "]"
-    rows = hybrid_search(
+    # Eval runs the same two-stage path production uses, so a recall@1
+    # improvement here matches what real RAG queries will see — otherwise
+    # the eval is measuring a different system than the one we ship.
+    rows, rerank_metrics = retrieve_with_optional_rerank(
         cur,
         tenant_id=tenant_id,
-        embedding_literal=literal,
         query_text=case.query_text,
+        embedding_literal=literal,
         top_k=top_k,
     )
+    if rerank_metrics is not None:
+        # Tag the rerank call as eval-side so the cost dashboard can
+        # split eval rerank spend from production rerank spend, same
+        # posture as the existing embedding-eval cost rows.
+        log_model_call_isolated(
+            tenant_id=tenant_id,
+            job_id=None,
+            kind="rerank",
+            provider=rerank_metrics.provider,
+            model=rerank_metrics.model,
+            duration_ms=rerank_metrics.duration_ms,
+            success=rerank_metrics.success,
+            cost_usd=rerank_metrics.cost_usd,
+            error_class=rerank_metrics.error_class,
+            error_message=rerank_metrics.error_message,
+            request_meta={
+                "eval": True,
+                "case_name": case.name,
+                "candidate_count": rerank_metrics.candidate_count,
+                **rerank_metrics.extra,
+            },
+        )
     found_titles: list[str] = []
     hit_rank: int | None = None
     expected_set = set(case.expected_document_titles)

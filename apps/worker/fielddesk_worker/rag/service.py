@@ -8,13 +8,14 @@ import structlog
 from fielddesk_worker.db_queries import (
     enqueue_job,
     get_ticket_for_rag,
-    hybrid_search,
     insert_model_call,
     insert_rag_query,
     log_model_call_isolated,
 )
 from fielddesk_worker.embeddings.service import _make_provider as _make_embedding_provider
 from fielddesk_worker.providers.base import CallMetrics
+from fielddesk_worker.rag.retrieval import retrieve_with_optional_rerank
+from fielddesk_worker.reranking import RerankerMetrics
 
 log = structlog.get_logger()
 
@@ -85,14 +86,19 @@ def retrieve(job: dict[str, Any], cur) -> dict[str, Any]:
 
     embedding_literal = _format_halfvec_literal(vectors[0])
 
-    raw_results = hybrid_search(
+    raw_results, rerank_metrics = retrieve_with_optional_rerank(
         cur,
         tenant_id=tenant_id,
-        embedding_literal=embedding_literal,
         query_text=query_text,
+        embedding_literal=embedding_literal,
         top_k=top_k,
     )
     results = [_clean_result_row(r) for r in raw_results]
+    if rerank_metrics is not None:
+        # Whether the rerank call succeeded or failed, it cost money (or
+        # took time). One ai_model_calls row per RAG query so the cost
+        # dashboard can split rerank spend from embedding spend.
+        _log_rerank_call(cur, job, rerank_metrics, query_text)
 
     rag_query_id = insert_rag_query(
         cur,
@@ -197,5 +203,34 @@ def _log_embed_call(
         request_meta={
             "purpose": "rag_query_embed",
             "query_text_preview": query_text[:200],
+        },
+    )
+
+
+def _log_rerank_call(
+    cur, job: dict[str, Any], metrics: RerankerMetrics, query_text: str
+) -> None:
+    """One ai_model_calls row per rerank invocation. Uses kind='rerank'
+    which the schema's CHECK constraint already allows (added in 00006).
+    """
+    insert_model_call(
+        cur,
+        tenant_id=job["tenant_id"],
+        job_id=job.get("id"),
+        kind="rerank",
+        provider=metrics.provider,
+        model=metrics.model,
+        duration_ms=metrics.duration_ms,
+        success=metrics.success,
+        input_tokens=0,
+        output_tokens=0,
+        cost_usd=metrics.cost_usd,
+        error_class=metrics.error_class,
+        error_message=metrics.error_message,
+        request_meta={
+            "purpose": "rag_rerank",
+            "query_text_preview": query_text[:200],
+            "candidate_count": metrics.candidate_count,
+            **metrics.extra,
         },
     )
