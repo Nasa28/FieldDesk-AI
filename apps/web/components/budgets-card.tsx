@@ -113,14 +113,10 @@ export function BudgetsCard({ tenantId }: { tenantId: string }) {
   }
 
   if (!tenantConfigured) {
-    return (
-      <div className="card">
-        <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
-          Tenant AI budgets
-        </div>
-        <p className="muted">Set a tenant ID above to load budgets.</p>
-      </div>
-    );
+    // Brief render moment before the parent's session-loading useEffect
+    // resolves; once it does, tenantId becomes the session's tenant UUID
+    // and load() runs.
+    return null;
   }
 
   return (

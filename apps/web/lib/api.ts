@@ -62,13 +62,3 @@ export async function api<T = unknown>(path: string, init: ApiOptions = {}): Pro
   return (await res.json()) as T;
 }
 
-export function saveTenantId(tenantId: string) {
-  window.localStorage.setItem("fielddesk.tenant_id", tenantId.trim());
-}
-
-export function currentTenantId() {
-  if (typeof window === "undefined") {
-    return "";
-  }
-  return window.localStorage.getItem("fielddesk.tenant_id") ?? "";
-}

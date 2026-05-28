@@ -1,8 +1,7 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
-import { api, currentTenantId } from "../../lib/api";
+import { api } from "../../lib/api";
 import {
   formatInt,
   formatMS,
@@ -49,15 +48,10 @@ type CostsResponse = {
 };
 
 export default function DashboardPage() {
-  const [tenantConfigured, setTenantConfigured] = useState<boolean | null>(null);
   const [metrics, setMetrics] = useState<MetricsResponse | null>(null);
   const [costs, setCosts] = useState<CostsResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-
-  useEffect(() => {
-    setTenantConfigured(Boolean(currentTenantId()));
-  }, []);
 
   async function load() {
     const window = todayWindow();
@@ -82,20 +76,9 @@ export default function DashboardPage() {
   }
 
   useEffect(() => {
-    if (tenantConfigured) void load();
+    void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantConfigured]);
-
-  if (tenantConfigured === null) {
-    return (
-      <div>
-        <h1 className="page-title">Dashboard</h1>
-      </div>
-    );
-  }
-  if (!tenantConfigured) {
-    return <NoTenant />;
-  }
+  }, []);
 
   const llmLatency = metrics?.latency_by_kind.find((row) => row.kind === "llm");
   const transcriptionLatency = metrics?.latency_by_kind.find((row) => row.kind === "transcription");
@@ -160,17 +143,5 @@ function toLocalInput(d: Date): string {
   return (
     `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
     `T${pad(d.getHours())}:${pad(d.getMinutes())}`
-  );
-}
-
-function NoTenant() {
-  return (
-    <div>
-      <h1 className="page-title">Dashboard</h1>
-      <p className="page-subtitle">Set a tenant ID first.</p>
-      <div className="card">
-        <Link href="/settings">Open Settings →</Link>
-      </div>
-    </div>
   );
 }

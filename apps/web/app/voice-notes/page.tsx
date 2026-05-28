@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, currentTenantId, saveTenantId } from "../../lib/api";
+import { api } from "../../lib/api";
 
 type VoiceNote = {
   id: string;
@@ -24,7 +24,6 @@ type UploadedResponse = {
 };
 
 export default function VoiceNotesPage() {
-  const [tenantId, setTenantId] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [items, setItems] = useState<VoiceNote[]>([]);
   const [message, setMessage] = useState("");
@@ -32,11 +31,8 @@ export default function VoiceNotesPage() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    const stored = currentTenantId();
-    setTenantId(stored);
-    if (stored) {
-      void load();
-    }
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function load() {
@@ -50,15 +46,10 @@ export default function VoiceNotesPage() {
       setError("Choose an audio file.");
       return;
     }
-    if (!tenantId.trim()) {
-      setError("Set a tenant id.");
-      return;
-    }
     setBusy(true);
     setError("");
     setMessage("");
     try {
-      saveTenantId(tenantId);
       const created = await api<CreateVoiceNoteResponse>("/v1/voice-notes", {
         method: "POST",
         body: JSON.stringify({
@@ -96,10 +87,6 @@ export default function VoiceNotesPage() {
       <h1 className="page-title">Voice Notes</h1>
       <div className="toolbar">
         <label className="field">
-          <span>Tenant ID</span>
-          <input value={tenantId} onChange={(e) => setTenantId(e.target.value)} />
-        </label>
-        <label className="field">
           <span>Audio file</span>
           <input
             type="file"
@@ -110,7 +97,7 @@ export default function VoiceNotesPage() {
         <button className="primary" disabled={busy} onClick={upload}>
           Upload
         </button>
-        <button disabled={busy || !tenantId.trim()} onClick={() => void load()}>
+        <button disabled={busy} onClick={() => void load()}>
           Refresh
         </button>
       </div>

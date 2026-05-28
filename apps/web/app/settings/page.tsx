@@ -26,12 +26,11 @@ export default function SettingsPage() {
     } catch (err) {
       if (err instanceof ApiError && err.status !== 401) {
         setError(err.message);
-        setSigningOut(false);
-        return;
       }
+    } finally {
+      clearSession();
+      router.replace("/login");
     }
-    clearSession();
-    router.replace("/login");
   }
 
   const apiUrl =

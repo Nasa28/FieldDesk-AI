@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, currentTenantId, saveTenantId } from "../../lib/api";
+import { api } from "../../lib/api";
 
 type ReviewItem = {
   review: {
@@ -24,7 +24,6 @@ function pretty(value: unknown) {
 }
 
 export default function ReviewQueuePage() {
-  const [tenantId, setTenantId] = useState("");
   const [items, setItems] = useState<ReviewItem[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState<Record<string, string>>({});
@@ -32,18 +31,12 @@ export default function ReviewQueuePage() {
   const [busy, setBusy] = useState<string | null>(null);
 
   useEffect(() => {
-    const stored = currentTenantId();
-    setTenantId(stored);
-    if (stored) {
-      void load();
-    }
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function load() {
     setError("");
-    if (tenantId.trim()) {
-      saveTenantId(tenantId);
-    }
     const res = await api<{ items: ReviewItem[] }>("/v1/review-queue?status=open&limit=50");
     setItems(res.items);
     setDrafts(Object.fromEntries(res.items.map((item) => [
@@ -73,13 +66,7 @@ export default function ReviewQueuePage() {
     <div>
       <h1 className="page-title">Review Queue</h1>
       <div className="toolbar">
-        <label className="field">
-          <span>Tenant ID</span>
-          <input value={tenantId} onChange={(e) => setTenantId(e.target.value)} />
-        </label>
-        <button disabled={!tenantId.trim()} onClick={() => void load()}>
-          Refresh
-        </button>
+        <button onClick={() => void load()}>Refresh</button>
       </div>
       {error && <p className="error">{error}</p>}
       <div className="stack">

@@ -1,8 +1,7 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { api, currentTenantId } from "../../lib/api";
+import { api } from "../../lib/api";
 import { formatTimestamp } from "../../lib/dashboard";
 
 type Document = {
@@ -64,11 +63,6 @@ export default function DocumentsPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const [tenantConfigured, setTenantConfigured] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    setTenantConfigured(Boolean(currentTenantId()));
-  }, []);
 
   const load = useCallback(async () => {
     setError("");
@@ -81,8 +75,8 @@ export default function DocumentsPage() {
   }, []);
 
   useEffect(() => {
-    if (tenantConfigured) void load();
-  }, [tenantConfigured, load]);
+    void load();
+  }, [load]);
 
   async function upload() {
     if (!file) {
@@ -143,25 +137,6 @@ export default function DocumentsPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Delete failed.");
     }
-  }
-
-  if (tenantConfigured === null) {
-    return (
-      <div>
-        <h1 className="page-title">Documents</h1>
-      </div>
-    );
-  }
-  if (!tenantConfigured) {
-    return (
-      <div>
-        <h1 className="page-title">Documents</h1>
-        <p className="page-subtitle">Set a tenant ID first.</p>
-        <div className="card">
-          <Link href="/settings">Open Settings →</Link>
-        </div>
-      </div>
-    );
   }
 
   return (

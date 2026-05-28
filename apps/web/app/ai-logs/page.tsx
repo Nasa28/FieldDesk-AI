@@ -1,8 +1,7 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
-import { api, currentTenantId } from "../../lib/api";
+import { api } from "../../lib/api";
 import {
   defaultWindow,
   formatInt,
@@ -49,11 +48,6 @@ export default function AILogsPage() {
   const [nextCursor, setNextCursor] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [tenantConfigured, setTenantConfigured] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    setTenantConfigured(Boolean(currentTenantId()));
-  }, []);
 
   async function fetchPage(cursor: string) {
     const params = new URLSearchParams({
@@ -98,20 +92,9 @@ export default function AILogsPage() {
   }
 
   useEffect(() => {
-    if (tenantConfigured) void load();
+    void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantConfigured]);
-
-  if (tenantConfigured === null) {
-    return (
-      <div>
-        <h1 className="page-title">AI Logs</h1>
-      </div>
-    );
-  }
-  if (!tenantConfigured) {
-    return <NoTenant />;
-  }
+  }, []);
 
   const rows = pages.flat();
 
@@ -280,18 +263,4 @@ function metaBool(value: unknown): boolean | null {
 
 function shortID(id: string): string {
   return id.length > 8 ? id.slice(0, 8) : id;
-}
-
-function NoTenant() {
-  return (
-    <div>
-      <h1 className="page-title">AI Logs</h1>
-      <p className="page-subtitle">
-        Set a tenant ID first.
-      </p>
-      <div className="card">
-        <Link href="/settings">Open Settings →</Link>
-      </div>
-    </div>
-  );
 }

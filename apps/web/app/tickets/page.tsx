@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { RelatedDocuments } from "../../components/related-documents";
 import { TicketRecommendations } from "../../components/ticket-recommendations";
-import { api, currentTenantId, saveTenantId } from "../../lib/api";
+import { api } from "../../lib/api";
 
 type Ticket = {
   id: string;
@@ -45,7 +45,6 @@ function draftFromTicket(ticket: Ticket): Draft {
 }
 
 export default function TicketsPage() {
-  const [tenantId, setTenantId] = useState("");
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [status, setStatus] = useState("");
@@ -53,18 +52,12 @@ export default function TicketsPage() {
   const [busy, setBusy] = useState<string | null>(null);
 
   useEffect(() => {
-    const stored = currentTenantId();
-    setTenantId(stored);
-    if (stored) {
-      void load();
-    }
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function load() {
     setError("");
-    if (tenantId.trim()) {
-      saveTenantId(tenantId);
-    }
     const query = status ? `?status=${encodeURIComponent(status)}` : "";
     const res = await api<{ tickets: Ticket[] }>(`/v1/tickets${query}`);
     setTickets(res.tickets);
@@ -139,10 +132,6 @@ export default function TicketsPage() {
       <h1 className="page-title">Tickets</h1>
       <div className="toolbar">
         <label className="field">
-          <span>Tenant ID</span>
-          <input value={tenantId} onChange={(e) => setTenantId(e.target.value)} />
-        </label>
-        <label className="field">
           <span>Status</span>
           <select value={status} onChange={(e) => setStatus(e.target.value)}>
             <option value="">All</option>
@@ -151,9 +140,7 @@ export default function TicketsPage() {
             <option value="rejected">Rejected</option>
           </select>
         </label>
-        <button disabled={!tenantId.trim()} onClick={() => void load()}>
-          Refresh
-        </button>
+        <button onClick={() => void load()}>Refresh</button>
       </div>
       {error && <p className="error">{error}</p>}
       <div className="stack">

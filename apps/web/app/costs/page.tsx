@@ -1,8 +1,7 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
-import { api, currentTenantId } from "../../lib/api";
+import { api } from "../../lib/api";
 import {
   defaultWindow,
   formatInt,
@@ -53,11 +52,6 @@ export default function CostsPage() {
   const [data, setData] = useState<CostsResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [tenantConfigured, setTenantConfigured] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    setTenantConfigured(Boolean(currentTenantId()));
-  }, []);
 
   async function load() {
     setLoading(true);
@@ -77,20 +71,9 @@ export default function CostsPage() {
   }
 
   useEffect(() => {
-    if (tenantConfigured) void load();
+    void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantConfigured]);
-
-  if (tenantConfigured === null) {
-    return (
-      <div>
-        <h1 className="page-title">Costs</h1>
-      </div>
-    );
-  }
-  if (!tenantConfigured) {
-    return <NoTenant />;
-  }
+  }, []);
 
   return (
     <div>
@@ -235,17 +218,3 @@ function Metric({ label, value, accent }: { label: string; value: string; accent
   );
 }
 
-function NoTenant() {
-  return (
-    <div>
-      <h1 className="page-title">Costs</h1>
-      <p className="page-subtitle">
-        Your session does not have a tenant associated with it yet. Sign
-        out and back in to refresh.
-      </p>
-      <div className="card">
-        <Link href="/settings">Open Settings →</Link>
-      </div>
-    </div>
-  );
-}
