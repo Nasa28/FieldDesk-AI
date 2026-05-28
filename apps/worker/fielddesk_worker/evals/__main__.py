@@ -22,6 +22,8 @@ import argparse
 import json
 import sys
 
+from fielddesk_worker.config import load_settings
+from fielddesk_worker.db import init_pool
 from fielddesk_worker.evals.comparison import (
     render_report,
     run_extraction_comparison,
@@ -35,6 +37,14 @@ from fielddesk_worker.prompts import list_extraction_prompt_versions
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Eval suites read directly from the DB pool via runner.py; without
+    # this init the very first SELECT against ai_model_calls / job_tickets
+    # raises "connection pool not initialized." The main worker entrypoint
+    # (main.py) does this for the queue loop but the eval CLI is invoked
+    # as `python -m fielddesk_worker.evals ...` and bypasses that path.
+    settings = load_settings()
+    init_pool(settings.database_url)
+
     parser = argparse.ArgumentParser(prog="fielddesk_worker.evals")
     parser.add_argument(
         "--tenant",

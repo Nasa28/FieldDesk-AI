@@ -35,7 +35,10 @@ services:
       retries: 5
 
   migrate:
-    image: ghcr.io/pressly/goose:latest
+    build:
+      context: .
+      dockerfile: infra/docker/migrate.Dockerfile
+    image: fielddesk-migrate:local
     container_name: fielddesk-migrate
     depends_on:
       postgres:
@@ -89,7 +92,11 @@ services:
       PRESIGN_TTL_SECONDS: ${PRESIGN_TTL_SECONDS}
       ALLOW_TENANT_HEADER_AUTH: ${ALLOW_TENANT_HEADER_AUTH:-true}
     ports:
-      - "8080:8080"
+      # Host port is overridable so the stack can co-exist with other
+      # projects already bound to 8080. The container port stays 8080
+      # — service-to-service comms (worker → api) go through the docker
+      # network and aren't affected by this.
+      - "${API_HOST_PORT:-8080}:8080"
 
   worker:
     build:
