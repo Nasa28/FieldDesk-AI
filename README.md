@@ -161,6 +161,22 @@ TENANT=$(./scripts/seed.sh)    # creates the demo tenant, prints its uuid
 the eval doesn't race the embed jobs. Without it, the script returns right
 after enqueueing and you have to wait ~10-30 seconds yourself.
 
+**Measured baseline (against live OpenAI `text-embedding-3-small`,
+2026-05-28):** `recall@5 = 1.0`, `MRR = 1.0` — every one of the 5 golden
+cases retrieved its expected document at rank 1. Embedding spend for the
+full dogfood (5 docs ingested + 5 eval queries) was 102 input tokens, ~$0
+at quoted prices.
+
+This is a perfect score on a deliberately small (n=5) golden set with
+non-adversarial queries written to be retrievable; it is a
+"plumbing-works" signal, not a production-quality benchmark. The
+honest next move (deferred) is broadening the golden set with harder
+cases — paraphrased queries, near-duplicate documents, queries that
+should *not* retrieve anything from this corpus — and only then making
+eval-driven decisions on reranking / contextual retrieval. A regression
+from 1.0 on this set is still a real signal, though, which is what the
+nightly cron is for.
+
 Before any of that hits a live stack, [test_seed_corpus.py](fielddesk-ai/apps/worker/tests/test_seed_corpus.py)
 exercises the parser + chunker against each markdown file (no DB, no
 OpenAI): every doc must parse into multiple segments, carry heading paths
