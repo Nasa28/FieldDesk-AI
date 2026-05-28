@@ -5,6 +5,7 @@ import { api } from "../../lib/api";
 import {
   defaultWindow,
   formatInt,
+  formatTimestamp,
   formatUSD,
   toRFC3339,
   type TimeWindow,
@@ -47,9 +48,32 @@ type CostsResponse = {
   by_model: ByModelRow[];
 };
 
+type ByTicketRow = {
+  ticket_id: string;
+  issue_summary?: string | null;
+  customer_name?: string | null;
+  status: string;
+  total_cost_usd: number;
+  failed_cost_usd: number;
+  call_count: number;
+  created_at: string;
+};
+
+type CostsByTicketResponse = {
+  window: { from: string; to: string };
+  ticket_count: number;
+  avg_cost_per_ticket_usd: number;
+  top_tickets: ByTicketRow[];
+};
+
+// Top-N tickets to fetch. The endpoint caps at 100 server-side; 10 is
+// the dashboard-friendly default — operators who need more can deep-link.
+const TOP_TICKETS_LIMIT = 10;
+
 export default function CostsPage() {
   const [range, setRange] = useState<TimeWindow>(defaultWindow());
   const [data, setData] = useState<CostsResponse | null>(null);
+  const [byTicket, setByTicket] = useState<CostsByTicketResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -61,8 +85,16 @@ export default function CostsPage() {
         from: toRFC3339(range.from),
         to: toRFC3339(range.to),
       });
-      const res = await api<CostsResponse>(`/v1/admin/costs?${params}`);
-      setData(res);
+      const byTicketParams = new URLSearchParams(params);
+      byTicketParams.set("limit", String(TOP_TICKETS_LIMIT));
+      // Parallel: both endpoints scan ai_model_calls but on different
+      // indexes (created_at vs ticket_id), so no point serializing.
+      const [costsRes, byTicketRes] = await Promise.all([
+        api<CostsResponse>(`/v1/admin/costs?${params}`),
+        api<CostsByTicketResponse>(`/v1/admin/costs/by-ticket?${byTicketParams}`),
+      ]);
+      setData(costsRes);
+      setByTicket(byTicketRes);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load costs.");
     } finally {
@@ -189,6 +221,65 @@ export default function CostsPage() {
                     <td>{formatInt(row.input_tokens)}</td>
                     <td>{formatInt(row.output_tokens)}</td>
                     <td>{formatInt(row.total_calls)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {byTicket && (
+        <>
+          <h2 className="page-subtitle" style={{ marginTop: 24 }}>By ticket</h2>
+          <div className="grid two">
+            <Metric
+              label="Tickets with attributed spend"
+              value={formatInt(byTicket.ticket_count)}
+            />
+            <Metric
+              label="Avg cost per ticket"
+              value={formatUSD(byTicket.avg_cost_per_ticket_usd)}
+            />
+          </div>
+          <div className="card" style={{ padding: 0, marginTop: 16 }}>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Ticket</th>
+                  <th>Status</th>
+                  <th>Total cost</th>
+                  <th>Failed cost</th>
+                  <th>Calls</th>
+                  <th>Created</th>
+                </tr>
+              </thead>
+              <tbody>
+                {byTicket.top_tickets.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="muted" style={{ padding: 16 }}>
+                      No tickets with attributed spend in this range.
+                    </td>
+                  </tr>
+                )}
+                {byTicket.top_tickets.map((row) => (
+                  <tr key={row.ticket_id}>
+                    <td>
+                      <div>{row.issue_summary || row.customer_name || "(no summary)"}</div>
+                      <div className="muted" style={{ fontSize: 12 }}>
+                        <code>{row.ticket_id.slice(0, 8)}</code>
+                        {row.customer_name && row.issue_summary
+                          ? ` · ${row.customer_name}`
+                          : ""}
+                      </div>
+                    </td>
+                    <td><span className="pill">{row.status}</span></td>
+                    <td>{formatUSD(row.total_cost_usd)}</td>
+                    <td className={row.failed_cost_usd > 0 ? "error" : "muted"}>
+                      {formatUSD(row.failed_cost_usd)}
+                    </td>
+                    <td>{formatInt(row.call_count)}</td>
+                    <td className="muted">{formatTimestamp(row.created_at)}</td>
                   </tr>
                 ))}
               </tbody>

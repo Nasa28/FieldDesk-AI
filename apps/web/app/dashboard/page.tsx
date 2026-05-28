@@ -47,9 +47,15 @@ type CostsResponse = {
   };
 };
 
+type ByTicketSummary = {
+  ticket_count: number;
+  avg_cost_per_ticket_usd: number;
+};
+
 export default function DashboardPage() {
   const [metrics, setMetrics] = useState<MetricsResponse | null>(null);
   const [costs, setCosts] = useState<CostsResponse | null>(null);
+  const [byTicket, setByTicket] = useState<ByTicketSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -59,15 +65,21 @@ export default function DashboardPage() {
       from: toRFC3339(window.from),
       to: toRFC3339(window.to),
     });
+    // limit=1 because the dashboard only needs the headline (count + avg);
+    // the full top-N list is rendered on the Costs page. Keeps payload small.
+    const byTicketParams = new URLSearchParams(params);
+    byTicketParams.set("limit", "1");
     setLoading(true);
     setError("");
     try {
-      const [metricsRes, costsRes] = await Promise.all([
+      const [metricsRes, costsRes, byTicketRes] = await Promise.all([
         api<MetricsResponse>(`/v1/admin/metrics?${params}`),
         api<CostsResponse>(`/v1/admin/costs?${params}`),
+        api<ByTicketSummary>(`/v1/admin/costs/by-ticket?${byTicketParams}`),
       ]);
       setMetrics(metricsRes);
       setCosts(costsRes);
+      setByTicket(byTicketRes);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load dashboard.");
     } finally {
@@ -86,6 +98,8 @@ export default function DashboardPage() {
     { label: "Cost today", value: formatUSD(costs?.rollup.total_cost_usd ?? 0) },
     { label: "Failed cost today", value: formatUSD(costs?.rollup.failed_cost_usd ?? 0), accent: (costs?.rollup.failed_cost_usd ?? 0) > 0 },
     { label: "Model calls today", value: formatInt(costs?.rollup.total_calls ?? 0) },
+    { label: "Avg cost per ticket today", value: formatUSD(byTicket?.avg_cost_per_ticket_usd ?? 0) },
+    { label: "Tickets with spend today", value: formatInt(byTicket?.ticket_count ?? 0) },
     { label: "Job success rate", value: formatPct(metrics?.job_success_rate ?? 0) },
     { label: "Job failure rate", value: formatPct(metrics?.job_failure_rate ?? 0), accent: (metrics?.job_failure_rate ?? 0) > 0 },
     { label: "Needs review jobs", value: formatInt(metrics?.jobs.needs_review_jobs ?? 0), accent: (metrics?.jobs.needs_review_jobs ?? 0) > 0 },
