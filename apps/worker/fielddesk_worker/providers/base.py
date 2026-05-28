@@ -48,7 +48,11 @@ class TranscriptionProvider(Protocol):
 
 class LLMExtractionProvider(Protocol):
     def extract_ticket(
-        self, transcript_text: str, context: dict[str, Any]
+        self,
+        transcript_text: str,
+        context: dict[str, Any],
+        *,
+        system_prompt: str | None = None,
     ) -> ExtractionResult: ...
 
 

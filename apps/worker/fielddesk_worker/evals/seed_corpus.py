@@ -105,9 +105,9 @@ def main(argv: list[str] | None = None) -> int:
 
 def _default_corpus_dir() -> Path:
     """Repo-relative default. This file lives at
-    apps/worker/fielddesk_worker/evals/seed_corpus.py — go up 4 to repo root,
-    then into infra/seed_corpus."""
-    return Path(__file__).resolve().parents[3] / "infra" / "seed_corpus"
+    apps/worker/fielddesk_worker/evals/seed_corpus.py; parents[4] is the
+    repo root, then infra/seed_corpus."""
+    return Path(__file__).resolve().parents[4] / "infra" / "seed_corpus"
 
 
 def _upload_one(client: httpx.Client, base: str, path: Path, title: str) -> str:

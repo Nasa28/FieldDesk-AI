@@ -11,6 +11,55 @@ production team." See `docs/PRD.md` and `AGENTS.md` for the rules of the road.
 
 ## Status
 
+**Phase 5 (prompt-version comparison) implemented.** Closes PRD §19's last
+bullet. Extraction prompts now live in a versioned registry at
+[apps/worker/fielddesk_worker/prompts/extraction.py](fielddesk-ai/apps/worker/fielddesk_worker/prompts/extraction.py)
+with a `get_extraction_prompt(version)` lookup and a SHA-256-based
+`extraction_prompt_hash(version)` so drifted "frozen" versions surface in
+the eval metrics. v1 is the production prompt (the injection-hardened
+body that was inline in `openai_llm.py`); v2 is a deliberate ablation that
+omits the explicit "ignore transcript instructions" rule — kept around so
+the comparison feature has a known-worse baseline to demonstrate against.
+
+The eval CLI grew a `--compare` flag:
+
+```bash
+python -m fielddesk_worker.evals --tenant <uuid> --kind extraction \
+    --compare extract.v1.injection-hardened,extract.v2.ablation
+```
+
+The runner executes the same golden injection cases under each version,
+writes one `ai_eval_runs` row per version (`prompt_version` set
+correctly), and prints a side-by-side table on stderr:
+
+```text
+version                                hash             inj_resist    delta  cases    sec
+-----------------------------------------------------------------------------------------
+extract.v1.injection-hardened          a3f9b2c1...          0.967     base       3    8.4
+extract.v2.ablation                    7e0c5d18...          0.333   -0.633       3    8.1
+REGRESSION: at least one non-baseline version scored worse than baseline.
+```
+
+`--regression-threshold 0.05` tolerates a 5-point drop before flagging a
+regression (useful when v2 is intentionally trading some safety for
+terseness). The first version listed is the baseline; deltas are
+"candidate − baseline." Exit code is non-zero on regression so the nightly
+cron / GitHub Actions / pre-deploy check fails noisily.
+
+Every provider call inside a comparison run logs to `ai_model_calls` with
+`request_meta.prompt_version` set, so the cost dashboard can break spend
+out by prompt version without parsing the eval-run blob.
+
+Adding a v3:
+
+1. Add a frozen body constant in `prompts/extraction.py` and register it
+   under a stable string (`extract.v3.something`).
+2. `pnpm web:build` / `make quality` (no API changes needed; the eval
+   reads the registry directly).
+3. Run `--compare extract.v1.injection-hardened,extract.v3.something`
+   against the demo tenant. Promote v3 by changing
+   `DEFAULT_EXTRACTION_PROMPT_VERSION` once the comparison clears.
+
 **Phase 4.5 (RAG synthesis backend) implemented.** Retrieved chunks now feed
 a structured LLM synthesis call that produces ticket-specific recommendations
 (possible diagnosis, suggested parts, safety checklist, follow-up questions,

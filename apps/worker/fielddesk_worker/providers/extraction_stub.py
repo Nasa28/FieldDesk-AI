@@ -36,7 +36,13 @@ class StubLLMExtractionProvider:
     def __init__(self, model: str = DEFAULT_MODEL):
         self._model = model
 
-    def extract_ticket(self, transcript_text: str, context: dict[str, Any]) -> ExtractionResult:
+    def extract_ticket(
+        self,
+        transcript_text: str,
+        context: dict[str, Any],
+        *,
+        system_prompt: str | None = None,
+    ) -> ExtractionResult:
         payload = dict(_STUB_PAYLOAD)
         raw_text = json.dumps(payload)
         return ExtractionResult(
@@ -52,5 +58,6 @@ class StubLLMExtractionProvider:
             metadata={
                 "transcript_chars": len(transcript_text),
                 "context_keys": sorted(context.keys()),
+                "system_prompt_chars": len(system_prompt or ""),
             },
         )

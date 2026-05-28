@@ -53,6 +53,11 @@ class SeedCorpusManifestTests(unittest.TestCase):
             path = CORPUS_DIR / filename
             self.assertTrue(path.is_file(), f"missing seed file: {path}")
 
+    def test_file_headings_match_golden_titles(self):
+        for filename, title in zip(CORPUS_FILES, SEED_DOCUMENT_TITLES, strict=True):
+            path = CORPUS_DIR / filename
+            self.assertEqual(_first_markdown_heading(path), title, filename)
+
 
 class SeedCorpusParseTests(unittest.TestCase):
     """Each seed file must parse into at least one segment AND carry at
@@ -134,6 +139,13 @@ class SeedCorpusChunkTests(unittest.TestCase):
                     len(set(hashes)),
                     f"{filename} produced duplicate content_hashes",
                 )
+
+
+def _first_markdown_heading(path: Path) -> str:
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("# "):
+            return line[2:].strip()
+    return ""
 
 
 if __name__ == "__main__":

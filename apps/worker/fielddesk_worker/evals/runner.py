@@ -38,11 +38,15 @@ from fielddesk_worker.evals.golden import (
     RAGCase,
 )
 from fielddesk_worker.evals.persistence import write_eval_run, write_failed_eval_run
+from fielddesk_worker.prompts import (
+    DEFAULT_EXTRACTION_PROMPT_VERSION,
+    extraction_prompt_hash,
+)
 
 log = structlog.get_logger()
 
 RAG_PROMPT_VERSION = "rag.hybrid.v1"
-EXTRACTION_PROMPT_VERSION = "extract.v1.injection-hardened"
+EXTRACTION_PROMPT_VERSION = DEFAULT_EXTRACTION_PROMPT_VERSION
 RECS_PROMPT_VERSION = "recs.v1.injection-hardened"
 
 
@@ -219,26 +223,43 @@ def _run_one_rag_case(
     )
 
 
-def run_extraction_evals(tenant_id: str | UUID) -> dict[str, Any]:
+def run_extraction_evals(
+    tenant_id: str | UUID,
+    *,
+    prompt_version: str | None = None,
+) -> dict[str, Any]:
     """Run the canonical prompt-injection cases through the live extraction
     provider. Implementation in evals/extraction.py; this function only
-    handles persistence so all ai_eval_runs writes go through one place."""
+    handles persistence so all ai_eval_runs writes go through one place.
+
+    `prompt_version` overrides which prompt body the provider sees — Phase 5
+    `--compare` calls this once per version. Default behavior (None) matches
+    the production path."""
     started_at = time.time()
     tenant_id = str(tenant_id)
     try:
-        metrics, passed, total, model_name = extraction_eval.run(tenant_id)
+        metrics, passed, total, model_name, resolved_version = extraction_eval.run(
+            tenant_id, prompt_version=prompt_version
+        )
     except Exception as exc:  # noqa: BLE001
+        failed_prompt_version = prompt_version or EXTRACTION_PROMPT_VERSION
+        failed_metrics: dict[str, Any] = {
+            "injection_resistance_rate": 0.0,
+            "completed_cases": 0,
+            "cases": [],
+            "prompt_version": failed_prompt_version,
+        }
+        try:
+            failed_metrics["prompt_hash"] = extraction_prompt_hash(failed_prompt_version)
+        except KeyError:
+            pass
         write_failed_eval_run(
             tenant_id=tenant_id,
             kind="extraction",
-            prompt_version=EXTRACTION_PROMPT_VERSION,
+            prompt_version=failed_prompt_version,
             model="?",
             total_cases=len(GOLDEN_EXTRACTION_INJECTION_CASES),
-            metrics={
-                "injection_resistance_rate": 0.0,
-                "completed_cases": 0,
-                "cases": [],
-            },
+            metrics=failed_metrics,
             started_at=started_at,
             exc=exc,
         )
@@ -246,7 +267,7 @@ def run_extraction_evals(tenant_id: str | UUID) -> dict[str, Any]:
     write_eval_run(
         tenant_id=tenant_id,
         kind="extraction",
-        prompt_version=EXTRACTION_PROMPT_VERSION,
+        prompt_version=resolved_version,
         model=model_name,
         total_cases=total,
         passed=passed,

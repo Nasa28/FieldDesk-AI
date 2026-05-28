@@ -98,6 +98,23 @@ type rawSynthesisOutput struct {
 	Notes               *string       `json:"notes"`
 }
 
+const latestRecommendationForTicketSQL = `
+	SELECT r.id, r.tenant_id, r.job_ticket_id, r.rag_query_id,
+	       r.output, r.confidence,
+	       r.provider, r.model, r.prompt_version, r.schema_version,
+	       r.input_tokens, r.output_tokens, r.cost_usd, r.duration_ms,
+	       r.json_valid, r.error_message, r.created_at,
+	       rq.results AS rag_results
+	FROM ticket_recommendations r
+	LEFT JOIN rag_queries rq
+	       ON rq.id = r.rag_query_id
+	      AND rq.tenant_id = r.tenant_id
+	      AND rq.job_ticket_id = r.job_ticket_id
+	WHERE r.tenant_id = $1 AND r.job_ticket_id = $2
+	ORDER BY r.created_at DESC
+	LIMIT 1
+`
+
 // GetLatestRecommendationForTicket returns the most recent
 // ticket_recommendations row for a ticket, flattened to the wire shape and
 // with citations enriched against the rag_queries.results that drove the
@@ -111,20 +128,6 @@ type rawSynthesisOutput struct {
 func GetLatestRecommendationForTicket(
 	ctx context.Context, db *DB, ticketID, tenantID uuid.UUID,
 ) (TicketRecommendation, error) {
-	const q = `
-		SELECT r.id, r.tenant_id, r.job_ticket_id, r.rag_query_id,
-		       r.output, r.confidence,
-		       r.provider, r.model, r.prompt_version, r.schema_version,
-		       r.input_tokens, r.output_tokens, r.cost_usd, r.duration_ms,
-		       r.json_valid, r.error_message, r.created_at,
-		       rq.results AS rag_results
-		FROM ticket_recommendations r
-		LEFT JOIN rag_queries rq
-		       ON rq.id = r.rag_query_id AND rq.tenant_id = r.tenant_id
-		WHERE r.tenant_id = $1 AND r.job_ticket_id = $2
-		ORDER BY r.created_at DESC
-		LIMIT 1
-	`
 	var (
 		id            uuid.UUID
 		tID           uuid.UUID
@@ -145,7 +148,7 @@ func GetLatestRecommendationForTicket(
 		createdAt     time.Time
 		ragResultsRaw []byte
 	)
-	err := db.QueryRow(ctx, q, tenantID, ticketID).Scan(
+	err := db.QueryRow(ctx, latestRecommendationForTicketSQL, tenantID, ticketID).Scan(
 		&id, &tID, &jobTicketID, &ragQueryID,
 		&outputRaw, &rowConfidence,
 		&provider, &model, &promptVersion, &schemaVersion,

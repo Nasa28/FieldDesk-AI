@@ -1,6 +1,7 @@
 package database
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -10,6 +11,15 @@ import (
 // exercised in integration-only flows; what we test here is the in-Go
 // citation enrichment + synthesis-output unmarshal — the slices most likely
 // to regress if someone touches the wire shape.
+
+func TestLatestRecommendationSQLBindsRAGQueryToSameTicket(t *testing.T) {
+	if !strings.Contains(
+		latestRecommendationForTicketSQL,
+		"rq.job_ticket_id = r.job_ticket_id",
+	) {
+		t.Fatalf("recommendation citation enrichment must join rag_queries on job_ticket_id")
+	}
+}
 
 func TestEnrichCitationsDropsHallucinatedChunkIDs(t *testing.T) {
 	docID := uuid.New()

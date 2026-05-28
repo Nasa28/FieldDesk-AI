@@ -5,7 +5,7 @@
 # document rows — delete first if you want clean numbers.
 #
 # Usage:
-#   ./scripts/seed-corpus.sh <tenant-uuid> [api-url] [--wait]
+#   ./scripts/seed-corpus.sh <tenant-uuid> [api-url] [--wait | --wait-seconds N]
 #
 # Example:
 #   TENANT=$(./scripts/seed.sh)
@@ -15,22 +15,51 @@
 set -euo pipefail
 
 if [ "$#" -lt 1 ]; then
-    echo "usage: $0 <tenant-uuid> [api-url] [--wait]" >&2
+    echo "usage: $0 <tenant-uuid> [api-url] [--wait | --wait-seconds N]" >&2
     exit 64
 fi
 
 TENANT="$1"
-API_URL="${2:-http://localhost:8080}"
-WAIT_FLAG=""
-WAIT_SECONDS=120
+shift
 
-# A bare --wait flag means "wait until every doc is ready or timeout".
-# Reusing seed_corpus.py's --wait-seconds avoids reimplementing polling.
-for arg in "$@"; do
-    if [ "$arg" = "--wait" ]; then
-        WAIT_FLAG="--wait-seconds $WAIT_SECONDS"
-    fi
+API_URL="http://localhost:8080"
+API_URL_SET=0
+WAIT_SECONDS=0
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --wait)
+            WAIT_SECONDS=120
+            shift
+            ;;
+        --wait-seconds)
+            if [ "$#" -lt 2 ]; then
+                echo "--wait-seconds requires a value" >&2
+                exit 64
+            fi
+            WAIT_SECONDS="$2"
+            shift 2
+            ;;
+        --*)
+            echo "unknown option: $1" >&2
+            exit 64
+            ;;
+        *)
+            if [ "$API_URL_SET" -eq 1 ]; then
+                echo "unexpected argument: $1" >&2
+                exit 64
+            fi
+            API_URL="$1"
+            API_URL_SET=1
+            shift
+            ;;
+    esac
 done
+
+WAIT_ARGS=()
+if [ "$WAIT_SECONDS" != "0" ]; then
+    WAIT_ARGS=(--wait-seconds "$WAIT_SECONDS")
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -52,4 +81,4 @@ cd "$ROOT"
 exec "$PYTHON_BIN" -m fielddesk_worker.evals.seed_corpus \
     --tenant "$TENANT" \
     --api-url "$API_URL" \
-    $WAIT_FLAG
+    "${WAIT_ARGS[@]}"

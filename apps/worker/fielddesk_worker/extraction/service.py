@@ -17,10 +17,15 @@ from fielddesk_worker.db_queries import (
     log_model_call_isolated,
 )
 from fielddesk_worker.extraction.schema import TicketExtraction
+from fielddesk_worker.prompts import (
+    DEFAULT_EXTRACTION_PROMPT_VERSION,
+    extraction_prompt_hash,
+)
 from fielddesk_worker.providers.base import ExtractionResult, LLMExtractionProvider
 
 
-PROMPT_VERSION = "extract.v1"
+PROMPT_VERSION = DEFAULT_EXTRACTION_PROMPT_VERSION
+PROMPT_HASH = extraction_prompt_hash(PROMPT_VERSION)
 SCHEMA_VERSION = "ticket.v1"
 
 
@@ -104,7 +109,13 @@ def extract(job: dict[str, Any], cur) -> dict[str, Any]:
             cost_usd=0.0,
             error_class=type(exc).__name__,
             error_message=str(exc),
-            request_meta={"transcript_id": transcript_id, "voice_note_id": voice_note_id},
+            request_meta={
+                "transcript_id": transcript_id,
+                "voice_note_id": voice_note_id,
+                "prompt_version": PROMPT_VERSION,
+                "prompt_hash": PROMPT_HASH,
+                "schema_version": SCHEMA_VERSION,
+            },
         )
         raise
 
@@ -164,6 +175,7 @@ def extract(job: dict[str, Any], cur) -> dict[str, Any]:
             "voice_note_id": voice_note_id,
             "transcript_chars": len(transcript_text),
             "prompt_version": PROMPT_VERSION,
+            "prompt_hash": PROMPT_HASH,
             "schema_version": SCHEMA_VERSION,
         },
         response_meta={

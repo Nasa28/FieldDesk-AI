@@ -19,11 +19,7 @@ SELECT id FROM tenants WHERE slug = 'demo';
 EOF
 )
 
-if command -v psql >/dev/null 2>&1; then
-  if [ -z "${DATABASE_URL:-}" ]; then
-    echo "DATABASE_URL is required when running against a local psql. Source .env or export it." >&2
-    exit 1
-  fi
+if [ -n "${DATABASE_URL:-}" ] && command -v psql >/dev/null 2>&1; then
   printf '%s' "${SQL}" | psql "${DATABASE_URL}" -At
 else
   cd "${ROOT}"

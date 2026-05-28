@@ -32,6 +32,11 @@ from fielddesk_worker.extraction.service import (
     _make_provider as _make_extraction_provider,
 )
 from fielddesk_worker.extraction.schema import TicketExtraction
+from fielddesk_worker.prompts import (
+    DEFAULT_EXTRACTION_PROMPT_VERSION,
+    extraction_prompt_hash,
+    get_extraction_prompt,
+)
 
 log = structlog.get_logger()
 
@@ -50,41 +55,70 @@ class ExtractionCaseResult:
     passed: bool
 
 
-def run(tenant_id: str | UUID) -> tuple[dict[str, Any], int, int, str]:
-    """Run all extraction injection cases.
+def run(
+    tenant_id: str | UUID,
+    *,
+    prompt_version: str | None = None,
+) -> tuple[dict[str, Any], int, int, str, str]:
+    """Run all extraction injection cases under a specific prompt version.
 
-    Returns (metrics_dict, passed_count, total_count, model_name) so the
-    runner module can persist an ai_eval_runs row without re-deriving any
-    of those numbers.
+    Returns (metrics_dict, passed_count, total_count, model_name,
+    resolved_prompt_version). Phase 5's comparison feature calls this once
+    per version; the default path (no `prompt_version`) uses the registry's
+    DEFAULT, which preserves Phase 4c behavior exactly.
     """
     tenant_id = str(tenant_id)
+    resolved_version = (prompt_version or DEFAULT_EXTRACTION_PROMPT_VERSION).strip()
+    system_prompt = get_extraction_prompt(resolved_version)
+    prompt_hash = extraction_prompt_hash(resolved_version)
     provider = _make_extraction_provider()
     results: list[ExtractionCaseResult] = []
 
     for case in GOLDEN_EXTRACTION_INJECTION_CASES:
-        results.append(_run_one_case(provider, case, tenant_id))
+        results.append(
+            _run_one_case(
+                provider,
+                case,
+                tenant_id,
+                system_prompt,
+                resolved_version,
+                prompt_hash,
+            )
+        )
 
     passed = sum(1 for r in results if r.passed)
     total = len(results)
     metrics: dict[str, Any] = {
         "injection_resistance_rate": (passed / total) if total else 0.0,
+        "prompt_version": resolved_version,
+        "prompt_hash": prompt_hash,
         "cases": [asdict(r) for r in results],
     }
     log.info(
         "extraction_injection_eval_completed",
         tenant_id=tenant_id,
+        prompt_version=resolved_version,
         total=total,
         passed=passed,
     )
-    return metrics, passed, total, provider_model(provider)
+    return metrics, passed, total, provider_model(provider), resolved_version
 
 
 def _run_one_case(
-    provider, case: ExtractionCase, tenant_id: str
+    provider,
+    case: ExtractionCase,
+    tenant_id: str,
+    system_prompt: str,
+    prompt_version: str,
+    prompt_hash: str,
 ) -> ExtractionCaseResult:
     started = time.perf_counter()
     try:
-        result = provider.extract_ticket(case.transcript, {"eval": True})
+        # extract_ticket gained a system_prompt kwarg in Phase 5 so comparison
+        # can run the same cases under alternate registry bodies.
+        result = provider.extract_ticket(
+            case.transcript, {"eval": True}, system_prompt=system_prompt
+        )
     except Exception as exc:  # noqa: BLE001
         log_model_call_isolated(
             tenant_id=tenant_id,
@@ -101,11 +135,14 @@ def _run_one_case(
                 "eval": True,
                 "case_name": case.name,
                 "purpose": "injection_test",
+                "prompt_version": prompt_version,
+                "prompt_hash": prompt_hash,
             },
         )
         raise
     # AGENTS.md: every provider call gets a row in ai_model_calls. Tag as
-    # eval so a dashboard can split eval cost from production cost.
+    # eval + prompt_version so a dashboard can split eval cost not just from
+    # production cost but across prompt versions in a Phase 5 comparison run.
     log_model_call_isolated(
         tenant_id=tenant_id,
         job_id=None,
@@ -121,6 +158,8 @@ def _run_one_case(
             "eval": True,
             "case_name": case.name,
             "purpose": "injection_test",
+            "prompt_version": prompt_version,
+            "prompt_hash": prompt_hash,
         },
     )
     output = result.parsed_json or {}
