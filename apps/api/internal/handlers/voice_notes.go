@@ -16,12 +16,10 @@ import (
 	"github.com/google/uuid"
 )
 
-// allowedAudioMimes is the conservative MVP set. Add formats here as we
-// confirm the transcription provider supports them.
 var allowedAudioMimes = map[string]struct{}{
-	"audio/mpeg":  {}, // .mp3
-	"audio/mp3":   {}, // some clients send this non-canonical type
-	"audio/mp4":   {}, // .m4a
+	"audio/mpeg":  {},
+	"audio/mp3":   {},
+	"audio/mp4":   {},
 	"audio/m4a":   {},
 	"audio/wav":   {},
 	"audio/x-wav": {},
@@ -62,7 +60,6 @@ func toVoiceNoteResponse(v database.VoiceNote) voiceNoteResponse {
 	}
 }
 
-// CreateVoiceNote: POST /v1/voice-notes
 func (h *Handlers) CreateVoiceNote(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := middleware.TenantFromContext(r.Context())
 	if !ok {
@@ -97,11 +94,11 @@ func (h *Handlers) CreateVoiceNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pre-allocate the voice-note id so we can build the object key before insert.
 	id := uuid.New()
 	objectKey := storage.ObjectKeyForVoiceNote(tenantID, id, req.Filename)
 
 	v, err := database.CreateVoiceNote(r.Context(), h.db, database.CreateVoiceNoteParams{
+		ID:        id,
 		TenantID:  tenantID,
 		ObjectKey: objectKey,
 		MimeType:  req.MimeType,
@@ -117,7 +114,6 @@ func (h *Handlers) CreateVoiceNote(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, toVoiceNoteResponse(v))
 }
 
-// ListVoiceNotes: GET /v1/voice-notes
 func (h *Handlers) ListVoiceNotes(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := middleware.TenantFromContext(r.Context())
 	if !ok {
@@ -139,7 +135,6 @@ func (h *Handlers) ListVoiceNotes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"voice_notes": resp})
 }
 
-// GetVoiceNote: GET /v1/voice-notes/{id}
 func (h *Handlers) GetVoiceNote(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := middleware.TenantFromContext(r.Context())
 	if !ok {
@@ -165,13 +160,6 @@ func (h *Handlers) GetVoiceNote(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toVoiceNoteResponse(v))
 }
 
-// VoiceNoteUploadURL: POST /v1/voice-notes/{id}/upload-url
-// Returns a presigned PUT URL the client uses to upload audio bytes directly
-// to MinIO/S3, and enqueues a transcribe job in the same request.
-//
-// TODO: in a real flow, transcribe should be enqueued on an upload-confirmation
-// callback (or a server-side HEAD check) rather than at presign time. For MVP
-// the worker uses a fake transcription so the ordering doesn't matter yet.
 func (h *Handlers) VoiceNoteUploadURL(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := middleware.TenantFromContext(r.Context())
 	if !ok {
@@ -203,8 +191,53 @@ func (h *Handlers) VoiceNoteUploadURL(w http.ResponseWriter, r *http.Request) {
 	}
 	expiresAt := time.Now().UTC().Add(h.cfg.PresignTTL)
 
-	// Enqueue the transcribe job. Idempotent on (tenant_id, idempotency_key)
-	// so repeated calls to this endpoint do not pile up duplicate jobs.
+	writeJSON(w, http.StatusOK, map[string]any{
+		"upload_url": uploadURL,
+		"object_key": v.ObjectKey,
+		"mime_type":  v.MimeType,
+		"expires_at": expiresAt,
+	})
+}
+
+func (h *Handlers) VoiceNoteUploaded(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := middleware.TenantFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "missing_tenant", "tenant context missing")
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_id", "id must be a UUID")
+		return
+	}
+
+	v, err := database.GetVoiceNote(r.Context(), h.db, id, tenantID)
+	if errors.Is(err, database.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "voice note not found")
+		return
+	}
+	if err != nil {
+		h.logger.Error("get_voice_note_failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "get_failed", "could not load voice note")
+		return
+	}
+
+	info, err := h.storage.Stat(r.Context(), v.ObjectKey)
+	if err != nil {
+		h.logger.Error("stat_object_failed", "error", err, "object_key", v.ObjectKey)
+		writeError(w, http.StatusInternalServerError, "stat_failed", "could not verify object in storage")
+		return
+	}
+	if !info.Exists {
+		writeError(w, http.StatusConflict, "not_uploaded",
+			"object not found in storage; upload via the presigned URL first")
+		return
+	}
+	if err := validateUploadedObject(v, info); err != nil {
+		writeError(w, http.StatusConflict, "upload_mismatch", err.Error())
+		return
+	}
+
 	payload, err := json.Marshal(map[string]any{
 		"voice_note_id": v.ID.String(),
 		"tenant_id":     tenantID.String(),
@@ -216,28 +249,44 @@ func (h *Handlers) VoiceNoteUploadURL(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "could not encode job payload")
 		return
 	}
-	job, err := database.EnqueueAIJob(r.Context(), h.db, database.EnqueueAIJobParams{
+	result, err := database.ConfirmVoiceNoteUploaded(r.Context(), h.db, database.ConfirmVoiceNoteUploadedParams{
+		ID:             id,
 		TenantID:       tenantID,
-		Type:           "transcribe",
-		Payload:        payload,
+		JobPayload:     payload,
 		IdempotencyKey: fmt.Sprintf("voice-note:%s:transcribe", v.ID.String()),
 		MaxAttempts:    5,
 	})
+	if errors.Is(err, database.ErrInvalidState) {
+		writeError(w, http.StatusConflict, "invalid_state", "voice note cannot be confirmed from its current status")
+		return
+	}
 	if err != nil {
 		h.logger.Error("enqueue_transcribe_failed", "error", err, "voice_note_id", v.ID)
-		writeError(w, http.StatusInternalServerError, "enqueue_failed", "could not enqueue transcribe job")
+		writeError(w, http.StatusInternalServerError, "confirm_failed", "could not confirm upload")
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"upload_url": uploadURL,
-		"object_key": v.ObjectKey,
-		"mime_type":  v.MimeType,
-		"expires_at": expiresAt,
+		"voice_note": toVoiceNoteResponse(result.VoiceNote),
 		"job": map[string]any{
-			"id":     job.ID,
-			"type":   job.Type,
-			"status": job.Status,
+			"id":     result.Job.ID,
+			"type":   result.Job.Type,
+			"status": result.Job.Status,
 		},
 	})
+}
+
+func validateUploadedObject(v database.VoiceNote, info storage.ObjectInfo) error {
+	if v.SizeBytes != nil && info.Size != *v.SizeBytes {
+		return fmt.Errorf("uploaded object size %d does not match declared size %d", info.Size, *v.SizeBytes)
+	}
+	if info.ContentType == "" {
+		return nil
+	}
+	got := strings.ToLower(strings.TrimSpace(strings.Split(info.ContentType, ";")[0]))
+	want := strings.ToLower(strings.TrimSpace(v.MimeType))
+	if got != "" && want != "" && got != want {
+		return fmt.Errorf("uploaded object content type %q does not match declared mime_type %q", got, want)
+	}
+	return nil
 }

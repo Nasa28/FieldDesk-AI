@@ -1,14 +1,7 @@
-"""Provider protocols.
-
-Each provider is a small interface so the worker can swap implementations
-without touching service logic. Cost and token accounting is the caller's
-responsibility — every call must log to `ai_model_calls`.
-"""
-
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Protocol
+from dataclasses import dataclass, field
+from typing import Any, Protocol
 
 
 @dataclass(slots=True)
@@ -23,10 +16,40 @@ class CallMetrics:
     error_class: str | None = None
 
 
-class TranscriptionProvider(Protocol):
-    name: str
+@dataclass(slots=True)
+class TranscriptionResult:
+    text: str
+    provider: str
+    model: str
+    duration_ms: int
+    cost_usd: float
+    language: str | None = None
+    raw_response: dict[str, Any] | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def transcribe(self, audio_bytes: bytes, mime: str) -> tuple[str, CallMetrics]: ...
+
+@dataclass(slots=True)
+class ExtractionResult:
+    raw_text: str
+    parsed_json: dict[str, Any]
+    provider: str
+    model: str
+    duration_ms: int
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost_usd: float = 0.0
+    confidence: float | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+class TranscriptionProvider(Protocol):
+    def transcribe(self, audio_bytes: bytes, mime_type: str) -> TranscriptionResult: ...
+
+
+class LLMExtractionProvider(Protocol):
+    def extract_ticket(
+        self, transcript_text: str, context: dict[str, Any]
+    ) -> ExtractionResult: ...
 
 
 class LLMProvider(Protocol):

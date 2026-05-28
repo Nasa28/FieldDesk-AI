@@ -1,5 +1,3 @@
-"""Worker configuration loaded from environment variables."""
-
 from __future__ import annotations
 
 from pydantic import Field
@@ -14,10 +12,17 @@ class Settings(BaseSettings):
     s3_endpoint: str | None = Field(default=None, alias="S3_ENDPOINT")
     s3_region: str = Field(default="us-east-1", alias="S3_REGION")
     s3_bucket: str = Field(default="fielddesk", alias="S3_BUCKET")
-    s3_access_key: str | None = Field(default=None, alias="S3_ACCESS_KEY")
-    s3_secret_key: str | None = Field(default=None, alias="S3_SECRET_KEY")
+    s3_access_key_id: str | None = Field(default=None, alias="S3_ACCESS_KEY_ID")
+    s3_secret_access_key: str | None = Field(default=None, alias="S3_SECRET_ACCESS_KEY")
+    s3_use_ssl: bool = Field(default=False, alias="S3_USE_SSL")
 
-    transcription_provider: str = Field(default="openai", alias="TRANSCRIPTION_PROVIDER")
+    transcription_provider: str = Field(default="stub", alias="TRANSCRIPTION_PROVIDER")
+    transcription_model: str = Field(default="whisper-1", alias="TRANSCRIPTION_MODEL")
+    extraction_provider: str = Field(default="stub", alias="EXTRACTION_PROVIDER")
+    extraction_model: str = Field(default="gpt-4o-mini", alias="EXTRACTION_MODEL")
+    extraction_confidence_threshold: float = Field(
+        default=0.7, alias="EXTRACTION_CONFIDENCE_THRESHOLD"
+    )
     llm_provider: str = Field(default="openai", alias="LLM_PROVIDER")
     embedding_provider: str = Field(default="openai", alias="EMBEDDING_PROVIDER")
 

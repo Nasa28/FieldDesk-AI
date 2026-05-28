@@ -1,5 +1,3 @@
-"""Job types and dispatch."""
-
 from enum import StrEnum
 
 

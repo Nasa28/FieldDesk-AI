@@ -12,9 +12,8 @@ type ctxKey string
 
 const tenantIDKey ctxKey = "tenant_id"
 
-// RequireTenant enforces a valid X-Tenant-ID header on every wrapped route.
-// This is the dev shortcut for tenancy; real auth (sessions / JWT) will
-// derive the tenant_id from the authenticated principal instead.
+// Dev shortcut: real auth (sessions / JWT) will derive tenant_id from the
+// authenticated principal instead of reading a header.
 func RequireTenant(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw := r.Header.Get("X-Tenant-ID")
@@ -32,9 +31,6 @@ func RequireTenant(next http.Handler) http.Handler {
 	})
 }
 
-// TenantFromContext returns the tenant id set by RequireTenant. The second
-// return is false only if RequireTenant did not run — callers in protected
-// routes can treat it as a programming error if that happens.
 func TenantFromContext(ctx context.Context) (uuid.UUID, bool) {
 	id, ok := ctx.Value(tenantIDKey).(uuid.UUID)
 	return id, ok

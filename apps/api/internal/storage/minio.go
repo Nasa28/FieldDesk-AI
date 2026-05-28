@@ -12,11 +12,6 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
-// MinIOConfig is everything needed to build a MinIO client.
-// PublicEndpoint is optional — when set, presigned URLs are rewritten
-// to use it so a browser can reach the bucket through a host-visible URL
-// (e.g. http://localhost:9000) even though the API uses the in-cluster
-// hostname (e.g. minio:9000) for direct calls.
 type MinIOConfig struct {
 	Endpoint        string
 	PublicEndpoint  string
@@ -33,8 +28,6 @@ type MinIO struct {
 	publicEndpoint string
 }
 
-// NewMinIO builds a MinIO/S3 client. Endpoint must be a bare host:port,
-// not a URL — minio-go takes the scheme via UseSSL.
 func NewMinIO(cfg MinIOConfig) (*MinIO, error) {
 	endpoint := stripScheme(cfg.Endpoint)
 	cli, err := minio.New(endpoint, &minio.Options{
@@ -64,10 +57,32 @@ func (m *MinIO) PresignPut(ctx context.Context, key, contentType string, expires
 	return m.rewriteForPublic(u).String(), nil
 }
 
-// rewriteForPublic swaps the in-cluster host (e.g. http://minio:9000) for a
-// browser-reachable host (e.g. http://localhost:9000) when PublicEndpoint is set.
-// minio-go signs the request based on its configured endpoint, so we only
-// touch scheme + host — the signature stays valid.
+func (m *MinIO) Exists(ctx context.Context, key string) (bool, error) {
+	info, err := m.Stat(ctx, key)
+	if err != nil {
+		return false, err
+	}
+	return info.Exists, nil
+}
+
+func (m *MinIO) Stat(ctx context.Context, key string) (ObjectInfo, error) {
+	info, err := m.cli.StatObject(ctx, m.bucket, key, minio.StatObjectOptions{})
+	if err == nil {
+		return ObjectInfo{
+			Exists:      true,
+			Size:        info.Size,
+			ContentType: info.ContentType,
+		}, nil
+	}
+	er := minio.ToErrorResponse(err)
+	if er.StatusCode == http.StatusNotFound || er.Code == "NoSuchKey" {
+		return ObjectInfo{Exists: false}, nil
+	}
+	return ObjectInfo{}, fmt.Errorf("stat object: %w", err)
+}
+
+// Swap the in-cluster host for a browser-reachable one. Safe to mutate
+// scheme+host after signing because minio-go signs the path + query, not the host.
 func (m *MinIO) rewriteForPublic(u *url.URL) *url.URL {
 	if m.publicEndpoint == "" {
 		return u

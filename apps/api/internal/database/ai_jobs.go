@@ -14,9 +14,6 @@ type EnqueueAIJobParams struct {
 	MaxAttempts    int32
 }
 
-// EnqueueAIJob inserts a new job row. If a row with the same
-// (tenant_id, idempotency_key) already exists, the existing row is returned
-// so the caller cannot accidentally create duplicate work.
 func EnqueueAIJob(ctx context.Context, db *DB, p EnqueueAIJobParams) (AIJob, error) {
 	const q = `
 		INSERT INTO ai_jobs (tenant_id, type, payload, idempotency_key, max_attempts)

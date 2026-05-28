@@ -35,6 +35,19 @@ system, not a demo. The rules below override default instincts an agent might ha
 - Requests to add Redis, Kafka, or another runtime dependency before the Postgres queue has been outgrown.
 - Requests to add a generic "agents framework." We are building application-specific AI workflows, not an agent platform.
 
+## When implementing a feature
+
+- Start with a narrow vertical slice.
+- Do not add unrelated features.
+- Keep provider integrations behind interfaces.
+- Every AI call must be logged.
+- Every AI output must be validated before use.
+- Low-confidence AI output must route to human review.
+- Retryable jobs must remain idempotent.
+- Tenant boundaries must be enforced on every query.
+- Update README after each working slice.
+- Run `gofmt`, `go vet`, `go build`, `python3 -m compileall`, and `docker compose config -q` before reporting completion.
+
 ## When you finish a change
 
 - Tests if the change is testable.

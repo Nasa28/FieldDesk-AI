@@ -1,15 +1,11 @@
 package database
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
 )
-
-// Models in this file mirror what sqlc would generate from
-// apps/api/sql/queries/*.sql against the current migrations.
-// When sqlc is added to CI, the corresponding generated code under
-// internal/database/db/ will replace this hand-written layer.
 
 type VoiceNote struct {
 	ID         uuid.UUID  `json:"id"`
@@ -26,20 +22,67 @@ type VoiceNote struct {
 }
 
 type AIJob struct {
-	ID              uuid.UUID  `json:"id"`
-	TenantID        uuid.UUID  `json:"tenant_id"`
-	Type            string     `json:"type"`
-	Status          string     `json:"status"`
-	Payload         []byte     `json:"payload"`
-	Result          []byte     `json:"result,omitempty"`
-	ErrorClass      *string    `json:"error_class,omitempty"`
-	ErrorMessage    *string    `json:"error_message,omitempty"`
-	IdempotencyKey  string     `json:"idempotency_key"`
-	AttemptCount    int32      `json:"attempt_count"`
-	MaxAttempts     int32      `json:"max_attempts"`
-	RunAfter        time.Time  `json:"run_after"`
-	StartedAt       *time.Time `json:"started_at,omitempty"`
-	FinishedAt      *time.Time `json:"finished_at,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	ID             uuid.UUID  `json:"id"`
+	TenantID       uuid.UUID  `json:"tenant_id"`
+	Type           string     `json:"type"`
+	Status         string     `json:"status"`
+	Payload        []byte     `json:"payload"`
+	Result         []byte     `json:"result,omitempty"`
+	ErrorClass     *string    `json:"error_class,omitempty"`
+	ErrorMessage   *string    `json:"error_message,omitempty"`
+	IdempotencyKey string     `json:"idempotency_key"`
+	AttemptCount   int32      `json:"attempt_count"`
+	MaxAttempts    int32      `json:"max_attempts"`
+	RunAfter       time.Time  `json:"run_after"`
+	StartedAt      *time.Time `json:"started_at,omitempty"`
+	FinishedAt     *time.Time `json:"finished_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
+type JobTicket struct {
+	ID                  uuid.UUID  `json:"id"`
+	TenantID            uuid.UUID  `json:"tenant_id"`
+	VoiceNoteID         *uuid.UUID `json:"voice_note_id,omitempty"`
+	TranscriptID        *uuid.UUID `json:"transcript_id,omitempty"`
+	Status              string     `json:"status"`
+	Source              string     `json:"source"`
+	CustomerName        *string    `json:"customer_name,omitempty"`
+	CustomerPhone       *string    `json:"customer_phone,omitempty"`
+	ServiceAddress      *string    `json:"service_address,omitempty"`
+	TradeType           *string    `json:"trade_type,omitempty"`
+	IssueSummary        *string    `json:"issue_summary,omitempty"`
+	DetailedDescription *string    `json:"detailed_description,omitempty"`
+	Priority            *string    `json:"priority,omitempty"`
+	PreferredVisitTime  *string    `json:"preferred_visit_time,omitempty"`
+	RequiredSkills      []string   `json:"required_skills"`
+	SuggestedParts      []string   `json:"suggested_parts"`
+	SafetyConcerns      []string   `json:"safety_concerns"`
+	WarrantyMention     *bool      `json:"warranty_mention,omitempty"`
+	FollowUpQuestions   []string   `json:"follow_up_questions"`
+	Confidence          *float64   `json:"confidence,omitempty"`
+	HumanReviewRequired bool       `json:"human_review_required"`
+	ApprovedBy          *uuid.UUID `json:"approved_by,omitempty"`
+	ApprovedAt          *time.Time `json:"approved_at,omitempty"`
+	RejectedReason      *string    `json:"rejected_reason,omitempty"`
+	RejectedAt          *time.Time `json:"rejected_at,omitempty"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
+}
+
+type HumanReview struct {
+	ID             uuid.UUID       `json:"id"`
+	TenantID       uuid.UUID       `json:"tenant_id"`
+	JobTicketID    *uuid.UUID      `json:"job_ticket_id,omitempty"`
+	AIJobID        *uuid.UUID      `json:"ai_job_id,omitempty"`
+	VoiceNoteID    *uuid.UUID      `json:"voice_note_id,omitempty"`
+	TranscriptID   *uuid.UUID      `json:"transcript_id,omitempty"`
+	AIExtractionID *uuid.UUID      `json:"ai_extraction_id,omitempty"`
+	Reason         string          `json:"reason"`
+	Status         string          `json:"status"`
+	ReviewerID     *uuid.UUID      `json:"reviewer_id,omitempty"`
+	Correction     json.RawMessage `json:"correction,omitempty"`
+	Notes          *string         `json:"notes,omitempty"`
+	CreatedAt      time.Time       `json:"created_at"`
+	ResolvedAt     *time.Time      `json:"resolved_at,omitempty"`
 }

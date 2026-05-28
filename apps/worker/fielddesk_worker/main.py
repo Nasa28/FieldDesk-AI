@@ -1,10 +1,3 @@
-"""Worker entrypoint.
-
-Polls the ``ai_jobs`` table for work and dispatches each row to a handler.
-Job claim, attempt recording, and status updates run in a single transaction
-per job so the attempt log and the job row never disagree.
-"""
-
 from __future__ import annotations
 
 import signal

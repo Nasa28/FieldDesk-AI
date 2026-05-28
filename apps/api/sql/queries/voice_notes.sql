@@ -1,6 +1,6 @@
 -- name: CreateVoiceNote :one
-INSERT INTO voice_notes (tenant_id, uploaded_by, object_key, mime_type, size_bytes, status)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO voice_notes (id, tenant_id, uploaded_by, object_key, mime_type, size_bytes, status)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING *;
 
 -- name: GetVoiceNote :one

@@ -38,8 +38,7 @@ func NewRouter(cfg *config.Config, db *database.DB, logger *slog.Logger, store s
 	r.Get("/readyz", h.Ready)
 
 	r.Route("/v1", func(r chi.Router) {
-		// Auth lives outside RequireTenant because signup/login establish the
-		// tenant in the first place. Stubs for now.
+		// /auth is outside RequireTenant because signup/login establish the tenant.
 		r.Route("/auth", func(r chi.Router) {
 			r.Post("/signup", h.NotImplemented)
 			r.Post("/login", h.NotImplemented)
@@ -47,7 +46,6 @@ func NewRouter(cfg *config.Config, db *database.DB, logger *slog.Logger, store s
 			r.Get("/me", h.NotImplemented)
 		})
 
-		// Every other /v1 route requires a tenant.
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RequireTenant)
 
@@ -56,13 +54,15 @@ func NewRouter(cfg *config.Config, db *database.DB, logger *slog.Logger, store s
 				r.Post("/", h.CreateVoiceNote)
 				r.Get("/{id}", h.GetVoiceNote)
 				r.Post("/{id}/upload-url", h.VoiceNoteUploadURL)
+				r.Post("/{id}/uploaded", h.VoiceNoteUploaded)
 			})
 
 			r.Route("/tickets", func(r chi.Router) {
-				r.Get("/", h.NotImplemented)
-				r.Get("/{id}", h.NotImplemented)
+				r.Get("/", h.ListTickets)
+				r.Get("/{id}", h.GetTicket)
 				r.Patch("/{id}", h.NotImplemented)
-				r.Post("/{id}/approve", h.NotImplemented)
+				r.Post("/{id}/approve", h.ApproveTicket)
+				r.Post("/{id}/reject", h.RejectTicket)
 			})
 
 			r.Route("/documents", func(r chi.Router) {
@@ -82,8 +82,8 @@ func NewRouter(cfg *config.Config, db *database.DB, logger *slog.Logger, store s
 			})
 
 			r.Route("/review-queue", func(r chi.Router) {
-				r.Get("/", h.NotImplemented)
-				r.Post("/{id}/resolve", h.NotImplemented)
+				r.Get("/", h.ListReviewQueue)
+				r.Post("/{id}/resolve", h.ResolveReview)
 			})
 
 			r.Route("/admin", func(r chi.Router) {

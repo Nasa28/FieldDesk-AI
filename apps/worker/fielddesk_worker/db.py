@@ -1,5 +1,3 @@
-"""Postgres connection helpers for the worker."""
-
 from __future__ import annotations
 
 from contextlib import contextmanager
