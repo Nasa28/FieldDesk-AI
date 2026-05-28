@@ -197,13 +197,19 @@ services:
     build:
       context: .
       dockerfile: infra/docker/web.Dockerfile
+      args:
+        # Baked into the client bundle by Next.js — see the ARG line in
+        # web.Dockerfile. Browsers will hit this URL for /v1/* calls.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
     container_name: fielddesk-web
     depends_on:
       - api
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
     ports:
-      - "3000:3000"
+      # Host port is overridable so we can co-exist with other dev
+      # projects already on 3000. Container port stays 3000.
+      - "${WEB_HOST_PORT:-3000}:3000"
 
 volumes:
   postgres_data:
