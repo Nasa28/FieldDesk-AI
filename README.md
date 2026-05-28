@@ -227,6 +227,13 @@ return low-confidence retrieval rather than confident garbage). The
 retrieval scorer doesn't surface a confidence threshold to the eval
 yet — adding it is a separate slice.
 
+Contextual retrieval is now implemented as deterministic metadata context
+at ingest: the worker stores raw `text` for citations/UI, stores
+`retrieval_text` for search, embeds `retrieval_text`, and builds the
+lexical `text_search` column from it. Existing corpora need migration
+00023 plus re-ingest to get contextual embeddings; until re-ingested,
+legacy rows keep `retrieval_text = text`.
+
 Before any of that hits a live stack, [test_seed_corpus.py](fielddesk-ai/apps/worker/tests/test_seed_corpus.py)
 exercises the parser + chunker against each markdown file (no DB, no
 OpenAI): every doc must parse into multiple segments, carry heading paths
@@ -299,11 +306,15 @@ recipe grounded in mid-2026 production practice.
   default (`text-embedding-3-large` is one config flip away).
   Halfvec(1536) column with HNSW (`m=16, ef_construction=200`); old
   `vector(1536)` + IVFFlat from migration 00007 is replaced in 00017.
+  The embedding input is `retrieval_text`: a deterministic prefix with
+  document title, heading path, page, and slide context followed by the
+  raw chunk.
 - **Hybrid retrieval**: single SQL CTE in
   `apps/api/internal/database/rag.go` + `apps/worker/.../db_queries/rag.py`
   — dense (cosine) + lexical (`tsvector` + `ts_rank_cd`) fused with RRF
-  (k=60), tenant-scoped at the outer `WHERE`. Returns top-K with
-  `chunk_id`, `document_title`, `heading_path`, `source_page`,
+  (k=60), tenant-scoped at the outer `WHERE`. The lexical channel indexes
+  `retrieval_text`; results still return raw `text` for citations. Returns
+  top-K with `chunk_id`, `document_title`, `heading_path`, `source_page`,
   `dense_rank`, `lexical_rank`, `fused_score`.
 - **Ad-hoc search**: `POST /v1/rag/search` enqueues a `rag` job and
   returns 202 + `job_id`; results land in `ai_jobs.result` and
@@ -316,13 +327,14 @@ recipe grounded in mid-2026 production practice.
   Phase 3 budget pre-flight (`embed` is in `BUDGET_GATED_JOB_TYPES`).
   Cost lands in `ai_model_calls` with `kind='embedding'`.
 
-**Deferred from Phase 4** (named, with reason):
+**Post-Phase-4 status / still deferred**:
 
-- Reranking (Cohere Rerank 3.5 / BGE-v2-m3). Research consensus is to
-  defer until eval data shows top-3 precision is the bottleneck;
-  retrieval-only first.
-- Contextual retrieval (Anthropic-style heading-aware blurbs). Worth
-  trying after baseline eval; adds Anthropic dependency to ingest.
+- Reranking is implemented as an optional Cohere/Voyage pass after
+  hybrid search; Voyage `rerank-2.5-lite` took the 12-case seed eval to
+  `recall@1 = 1.000`.
+- Contextual retrieval is implemented without adding an ingest-time LLM
+  dependency: deterministic metadata context is embedded and lexically
+  indexed, while raw chunks remain the citation surface.
 - Encrypted PDF unlocking (we detect + surface an actionable error,
   but don't accept passwords; operators must re-upload an unencrypted
   copy). Structured table extraction (cell-coordinate-preserving) still

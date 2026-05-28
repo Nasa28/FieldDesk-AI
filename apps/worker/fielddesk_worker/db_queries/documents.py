@@ -51,6 +51,7 @@ def insert_chunk(
     document_id: str | UUID,
     chunk_index: int,
     text: str,
+    retrieval_text: str,
     token_count: int,
     embedding: list[float],
     content_hash: str,
@@ -66,10 +67,10 @@ def insert_chunk(
     cur.execute(
         """
         INSERT INTO document_chunks
-            (tenant_id, document_id, chunk_index, text, token_count,
+            (tenant_id, document_id, chunk_index, text, retrieval_text, token_count,
              embedding, content_hash, heading_path, source_page, source_locator)
         VALUES
-            (%s, %s, %s, %s, %s, %s::halfvec, %s, %s, %s, %s)
+            (%s, %s, %s, %s, %s, %s, %s::halfvec, %s, %s, %s, %s)
         ON CONFLICT (document_id, content_hash) WHERE content_hash IS NOT NULL
         DO NOTHING
         """,
@@ -78,6 +79,7 @@ def insert_chunk(
             str(document_id),
             chunk_index,
             text,
+            retrieval_text,
             token_count,
             embedding_literal,
             content_hash,

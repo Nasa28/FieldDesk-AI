@@ -1,11 +1,11 @@
 # Phase 4c eval schedule — host crontab template.
 #
 # Run the eval CLI every night at 03:17 UTC against the configured tenant.
-# Non-zero exit (recall@5 or injection_resistance_rate below 50%) causes
-# cron to mail the script's stderr to MAILTO — wire that up to your ops
-# inbox, PagerDuty email integration, or whichever channel you actually
-# read. Don't rely on a Slack hook here; if the eval pipeline is down the
-# hook may be too.
+# Non-zero exit (RAG recall below configured gates or injection-resistance
+# below 100% by default) causes cron to mail the script's stderr to MAILTO —
+# wire that up to your ops inbox, PagerDuty email integration, or whichever
+# channel you actually read. Don't rely on a Slack hook here; if the eval
+# pipeline is down the hook may be too.
 #
 # Why 03:17 instead of 03:00: avoids the synchronized-cron-at-the-top-of-the-
 # hour spike that hits OpenAI's rate limiter from every project running its

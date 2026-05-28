@@ -14,6 +14,10 @@ from fielddesk_worker.db_queries import (
     update_document_status,
 )
 from fielddesk_worker.embeddings.chunker import chunk_segments
+from fielddesk_worker.embeddings.contextual import (
+    CONTEXTUAL_RETRIEVAL_VERSION,
+    build_retrieval_text,
+)
 from fielddesk_worker.parsing import ParseError, SUPPORTED_MIME_TYPES, parse_document
 from fielddesk_worker.providers.base import CallMetrics, EmbeddingProvider
 from fielddesk_worker.storage import get_object_bytes
@@ -47,7 +51,7 @@ def embed(job: dict[str, Any], cur) -> dict[str, Any]:
       2. Fetch object bytes from MinIO.
       3. Parse via the format-appropriate parser.
       4. Chunk into 512-token segments preserving heading_path / source_page.
-      5. Call the embedding provider (batches internally).
+      5. Build retrieval-only contextual text and call the embedding provider.
       6. Upsert chunks idempotently via the partial UNIQUE on content_hash.
       7. Log one ai_model_calls row, mark document 'ready'.
 
@@ -116,9 +120,15 @@ def embed(job: dict[str, Any], cur) -> dict[str, Any]:
         return {"chunks": 0, "ready": True, "reason": "empty"}
 
     provider = _make_provider()
-    texts = [c.text for c in chunks]
+    retrieval_texts = [
+        build_retrieval_text(
+            document_title=str(document["title"] or ""),
+            chunk=chunk,
+        )
+        for chunk in chunks
+    ]
     try:
-        vectors, metrics = provider.embed(texts)
+        vectors, metrics = provider.embed(retrieval_texts)
     except Exception as exc:  # noqa: BLE001
         # Log the failure (cost still applies if the provider charged us
         # mid-batch) before re-raising so the queue can retry.
@@ -133,7 +143,11 @@ def embed(job: dict[str, Any], cur) -> dict[str, Any]:
             cost_usd=0.0,
             error_class=type(exc).__name__,
             error_message=str(exc)[:1000],
-            request_meta={"document_id": str(document_id), "chunk_count": len(chunks)},
+            request_meta={
+                "document_id": str(document_id),
+                "chunk_count": len(chunks),
+                "contextual_retrieval": CONTEXTUAL_RETRIEVAL_VERSION,
+            },
         )
         raise
 
@@ -150,13 +164,14 @@ def embed(job: dict[str, Any], cur) -> dict[str, Any]:
     delete_existing_chunks(cur, document_id=document_id, tenant_id=tenant_id)
 
     inserted = 0
-    for chunk, vector in zip(chunks, vectors):
+    for chunk, vector, retrieval_text in zip(chunks, vectors, retrieval_texts):
         if insert_chunk(
             cur,
             tenant_id=tenant_id,
             document_id=document_id,
             chunk_index=chunk.chunk_index,
             text=chunk.text,
+            retrieval_text=retrieval_text,
             token_count=chunk.token_count,
             embedding=vector,
             content_hash=chunk.content_hash,
@@ -206,7 +221,11 @@ def _log_embed_call(
         input_tokens=metrics.input_tokens,
         output_tokens=metrics.output_tokens,
         cost_usd=metrics.cost_usd,
-        request_meta={"document_id": str(document_id), "chunk_count": chunk_count},
+        request_meta={
+            "document_id": str(document_id),
+            "chunk_count": chunk_count,
+            "contextual_retrieval": CONTEXTUAL_RETRIEVAL_VERSION,
+        },
     )
 
 

@@ -7,7 +7,8 @@
 # Run on the host with the worker venv active, OR via docker-compose:
 #   docker compose run --rm worker ./scripts/eval.sh <tenant-uuid>
 #
-# Exit code is 0 when every run cleared 50% pass rate, non-zero otherwise.
+# Exit code is 0 when every requested suite clears the CLI's stability gates
+# (RAG recall@1/recall@K plus 100% injection resistance by default).
 # Pair with cron (see infra/cron/evals.crontab) for nightly regression alerts.
 
 set -euo pipefail

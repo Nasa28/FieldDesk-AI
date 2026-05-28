@@ -107,7 +107,9 @@ class OpenAIEmbeddingProvider:
                 total_input_tokens += int(usage.get("prompt_tokens", 0))
 
         duration_ms = int((time.perf_counter() - started) * 1000)
-        cost_per_1m = COST_PER_1M_INPUT_USD.get(effective_model, 0.0)
+        cost_per_1m = COST_PER_1M_INPUT_USD.get(
+            effective_model, max(COST_PER_1M_INPUT_USD.values())
+        )
         cost_usd = (total_input_tokens / 1_000_000.0) * cost_per_1m
         metrics = CallMetrics(
             provider=PROVIDER_NAME,

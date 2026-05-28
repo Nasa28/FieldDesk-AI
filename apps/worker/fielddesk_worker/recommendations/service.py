@@ -18,6 +18,7 @@ from fielddesk_worker.prompting import (
     wrap_untrusted_ticket_summary,
 )
 from fielddesk_worker.providers.base import LLMProvider
+from fielddesk_worker.recommendations.grounding import enforce_grounded_recommendations
 from fielddesk_worker.recommendations.schema import RecommendationsOutput
 
 log = structlog.get_logger()
@@ -250,10 +251,14 @@ def synthesize(job: dict[str, Any], cur) -> dict[str, Any]:
     except ValidationError as exc:
         validation_error = str(exc)
 
+    grounding_valid = True
     json_valid = validation_error is None
     output_jsonable: dict[str, Any]
     confidence_value: float | None
     if validated is not None:
+        validated, grounding_valid = enforce_grounded_recommendations(
+            validated, chunks
+        )
         output_jsonable = validated.model_dump(mode="json")
         confidence_value = validated.confidence
     else:
@@ -318,6 +323,7 @@ def synthesize(job: dict[str, Any], cur) -> dict[str, Any]:
         },
         response_meta={
             "json_valid": json_valid,
+            "grounding_valid": grounding_valid,
             "confidence": confidence_value,
             "insufficient_context": (
                 validated.insufficient_context if validated is not None else True

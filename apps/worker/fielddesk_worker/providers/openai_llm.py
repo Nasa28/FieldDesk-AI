@@ -102,9 +102,15 @@ class OpenAIExtractionProvider:
         input_tokens = int(usage.get("prompt_tokens", 0))
         output_tokens = int(usage.get("completion_tokens", 0))
 
+        input_price = COST_PER_1M_INPUT_USD.get(
+            self._model, max(COST_PER_1M_INPUT_USD.values())
+        )
+        output_price = COST_PER_1M_OUTPUT_USD.get(
+            self._model, max(COST_PER_1M_OUTPUT_USD.values())
+        )
         cost_usd = round(
-            input_tokens * COST_PER_1M_INPUT_USD.get(self._model, 0.0) / 1_000_000
-            + output_tokens * COST_PER_1M_OUTPUT_USD.get(self._model, 0.0) / 1_000_000,
+            input_tokens * input_price / 1_000_000
+            + output_tokens * output_price / 1_000_000,
             6,
         )
 

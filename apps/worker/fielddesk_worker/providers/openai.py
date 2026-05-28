@@ -67,7 +67,9 @@ class OpenAITranscriptionProvider:
         text = body.get("text", "")
         language = body.get("language")
         audio_duration_sec = float(body.get("duration") or 0.0)
-        per_sec = COST_PER_SECOND_USD.get(self._model, 0.0)
+        per_sec = COST_PER_SECOND_USD.get(
+            self._model, max(COST_PER_SECOND_USD.values())
+        )
         cost = round(audio_duration_sec * per_sec, 6)
 
         return TranscriptionResult(
