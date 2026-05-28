@@ -27,13 +27,15 @@ type UploadedResponse = {
 // Allowed mime types map to filename extension hints so the browser file picker
 // nudges users at upload time. Mirrors the Go handler's allowedDocumentMimes
 // and the worker's parsing/base.SUPPORTED_MIME_TYPES.
-const ACCEPT_HINT = ".txt,.md,.pdf,.docx,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const ACCEPT_HINT = ".txt,.md,.pdf,.docx,.pptx,.doc,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/msword";
 
 const EXT_TO_MIME: Record<string, string> = {
   ".txt": "text/plain",
   ".md": "text/markdown",
   ".pdf": "application/pdf",
   ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  ".doc": "application/msword",
 };
 
 // Browsers report inconsistent mime types for some of these — Firefox calls
@@ -145,7 +147,8 @@ export default function DocumentsPage() {
       <p className="page-subtitle">
         SOPs, manuals, warranty policies — anything you want surfaced when a
         new ticket comes in. Supported: <code>.txt</code>, <code>.md</code>,
-        text-native <code>.pdf</code>, <code>.docx</code>.
+        <code>.pdf</code> (text-native or scanned — scanned uses OCR),{" "}
+        <code>.docx</code>, <code>.pptx</code>, <code>.doc</code>.
       </p>
 
       <div className="card">
@@ -232,6 +235,8 @@ export default function DocumentsPage() {
 function shortMime(mime?: string | null): string {
   if (!mime) return "—";
   if (mime.includes("wordprocessingml")) return "docx";
+  if (mime.includes("presentationml")) return "pptx";
+  if (mime === "application/msword") return "doc";
   if (mime === "application/pdf") return "pdf";
   if (mime.startsWith("text/markdown") || mime === "text/x-markdown") return "md";
   if (mime === "text/plain") return "txt";

@@ -208,14 +208,22 @@ embed, and search end-to-end via a hybrid (dense + lexical) retrieval
 recipe grounded in mid-2026 production practice.
 
 - **Upload + ingest**: `POST /v1/documents` mirrors the voice-notes flow
-  (create row → presigned PUT → confirm). Supported v1 formats: `.txt`,
-  `.md`, text-native `.pdf`, `.docx`. Scanned PDFs, encrypted PDFs,
-  `.doc`, and PPTX are deferred (a `failed` document with `parse_error`
-  is surfaced to the operator rather than silently producing bad chunks).
+  (create row → presigned PUT → confirm). Supported formats: `.txt`,
+  `.md`, `.pdf` (text-native and scanned — scanned falls back to OCR
+  automatically), `.docx`, `.pptx`, `.doc`. Encrypted PDFs land as
+  `failed` with an actionable `parse_error` asking the operator to
+  re-upload an unencrypted copy.
 - **Parsing** (`apps/worker/fielddesk_worker/parsing/`): heading-aware for
   markdown and DOCX, per-page for PDF (citations carry `source_page`),
-  text fallback. Each parser emits `ParsedSegment(text, heading_path,
-  source_page, source_locator)`.
+  per-slide for PPTX (citations carry `source_locator.slide`), text
+  fallback. Scanned PDFs route through `pypdfium2` (in-process page
+  rendering, no poppler dep) + Tesseract OCR; OCR'd segments carry
+  `source_locator.ocr=true` so confidence can be modulated on
+  scan-derived text. `.doc` goes through a headless LibreOffice
+  subprocess (`soffice --headless --convert-to docx`) and then the
+  existing DOCX parser, so heading_path + table handling stay
+  identical to a native `.docx` upload. Each parser emits
+  `ParsedSegment(text, heading_path, source_page, source_locator)`.
 - **Chunking**: token-aware via `tiktoken` (cl100k_base), 512 tokens
   target / 64 tokens overlap, recursive split on `\n\n` → `\n` →
   sentence boundaries → hard token cut as last resort. Idempotent via
@@ -249,8 +257,10 @@ recipe grounded in mid-2026 production practice.
   retrieval-only first.
 - Contextual retrieval (Anthropic-style heading-aware blurbs). Worth
   trying after baseline eval; adds Anthropic dependency to ingest.
-- OCR for scanned PDFs, encrypted PDF unlocking, `.doc`, PPTX, structured
-  table extraction.
+- Encrypted PDF unlocking (we detect + surface an actionable error,
+  but don't accept passwords; operators must re-upload an unencrypted
+  copy). Structured table extraction (cell-coordinate-preserving) still
+  out of scope.
 - Indirect prompt-injection mitigation for future RAG synthesis. Retrieved
   chunks are storage/UI-only today; before any LLM synthesis layer ships
   (Phase 4.5), chunk prompts must use untrusted-content delimiters and

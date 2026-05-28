@@ -12,6 +12,8 @@ SUPPORTED_MIME_TYPES: dict[str, str] = {
     "text/x-markdown": "markdown",
     "application/pdf": "pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+    "application/msword": "doc",
 }
 
 
@@ -65,4 +67,12 @@ def parse_document(content: bytes, mime_type: str) -> list[ParsedSegment]:
         from fielddesk_worker.parsing.docx import parse_docx
 
         return parse_docx(content)
+    if parser_key == "pptx":
+        from fielddesk_worker.parsing.pptx import parse_pptx
+
+        return parse_pptx(content)
+    if parser_key == "doc":
+        from fielddesk_worker.parsing.doc import parse_doc
+
+        return parse_doc(content)
     raise ParseError(f"unimplemented parser: {parser_key}")

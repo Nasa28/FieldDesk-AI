@@ -24,7 +24,9 @@ var allowedDocumentMimes = map[string]struct{}{
 	"text/markdown":   {},
 	"text/x-markdown": {},
 	"application/pdf": {},
-	"application/vnd.openxmlformats-officedocument.wordprocessingml.document": {}, // .docx
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.document":   {}, // .docx
+	"application/vnd.openxmlformats-officedocument.presentationml.presentation": {}, // .pptx
+	"application/msword": {}, // .doc (legacy OLE binary; needs libreoffice on the worker)
 }
 
 type createDocumentRequest struct {

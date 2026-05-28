@@ -151,10 +151,17 @@ class ChunkerTests(unittest.TestCase):
 
 
 class PdfParserTests(unittest.TestCase):
-    def test_scanned_pdf_with_no_extractable_text_raises(self):
-        # A PDF with pages but no text content (the shape of a scanned doc
-        # before OCR) must land as ParseError, not as a silently-empty
-        # 'ready' document. OCR is explicitly out of scope for v1.
+    def test_blank_scanned_pdf_raises_after_ocr_returns_empty(self):
+        # Blank pages go through the OCR fallback (which now exists) and
+        # tesseract returns the empty string. parse_pdf must surface this
+        # as ParseError so the document lands in status='failed' with a
+        # parse_error explaining that OCR ran but found nothing —
+        # critically not as a silently-empty 'ready' document.
+        #
+        # The OCR fallback's import line raises ParseError if pypdfium2
+        # or pytesseract are absent; either path lands here, which is
+        # exactly what we want — a clear failure rather than a silent
+        # success.
         try:
             from pypdf import PdfWriter
         except ModuleNotFoundError:
@@ -171,13 +178,107 @@ class PdfParserTests(unittest.TestCase):
 
         with self.assertRaises(ParseError) as ctx:
             parse_pdf(buf.getvalue())
-        self.assertIn("scanned", str(ctx.exception).lower())
+        msg = str(ctx.exception).lower()
+        # Either "OCR returned no text" (deps installed, blank pages) or
+        # "OCR fallback requires" (deps missing in local dev) — both are
+        # legitimate failure paths; what we're guarding is "must not
+        # silently succeed."
+        self.assertTrue(
+            "ocr" in msg or "no extractable text" in msg,
+            f"expected OCR-related ParseError, got: {ctx.exception}",
+        )
+
+    def test_encrypted_pdf_message_is_actionable(self):
+        # The error_message ends up in documents.parse_error and is
+        # surfaced verbatim in the failures dashboard. Operators reading
+        # "encrypted PDFs are not supported in v1" don't know what to do;
+        # the message must tell them how to fix it.
+        try:
+            from pypdf import PdfWriter
+        except ModuleNotFoundError:
+            self.skipTest("pypdf not installed")
+        from fielddesk_worker.parsing import ParseError
+        from fielddesk_worker.parsing.pdf import parse_pdf
+        import io as _io
+
+        writer = PdfWriter()
+        writer.add_blank_page(width=612, height=792)
+        writer.encrypt(user_password="secret")
+        buf = _io.BytesIO()
+        writer.write(buf)
+
+        with self.assertRaises(ParseError) as ctx:
+            parse_pdf(buf.getvalue())
+        msg = str(ctx.exception).lower()
+        self.assertIn("password", msg)
+        # The actionable phrasing: tell the operator what to do.
+        self.assertTrue(
+            "remove" in msg or "unencrypted" in msg,
+            f"encrypted-PDF error must tell the operator how to fix it, got: {ctx.exception}",
+        )
+
+
+class PptxParserTests(unittest.TestCase):
+    def test_emits_one_segment_per_non_empty_slide(self):
+        try:
+            from pptx import Presentation
+        except ModuleNotFoundError:
+            self.skipTest("python-pptx not installed")
+        from fielddesk_worker.parsing.pptx import parse_pptx
+        import io as _io
+
+        prs = Presentation()
+        # Slide 1: title + body.
+        slide = prs.slides.add_slide(prs.slide_layouts[1])
+        slide.shapes.title.text = "Hydraulic Pump Maintenance"
+        slide.placeholders[1].text = "Check the inlet filter every 90 days."
+        # Slide 2: title only.
+        slide2 = prs.slides.add_slide(prs.slide_layouts[5])
+        slide2.shapes.title.text = "Safety Notes"
+        buf = _io.BytesIO()
+        prs.save(buf)
+
+        segments = parse_pptx(buf.getvalue())
+        self.assertEqual(len(segments), 2)
+        # First slide carries the title as heading_path and includes the
+        # body content.
+        self.assertEqual(segments[0].heading_path, ["Hydraulic Pump Maintenance"])
+        self.assertIn("inlet filter", segments[0].text)
+        # source_locator carries slide numbering so citations can render
+        # "slide N of M".
+        self.assertEqual(segments[0].source_locator["slide"], 1)
+        self.assertEqual(segments[0].source_locator["of_slides"], 2)
+        # Second slide (title only) still emits a segment so the title
+        # is searchable even without body content.
+        self.assertEqual(segments[1].heading_path, ["Safety Notes"])
+
+
+class DocParserTests(unittest.TestCase):
+    def test_missing_libreoffice_raises_actionable_error(self):
+        # Same posture as the encrypted-PDF message: if soffice is absent,
+        # the failure must name the missing dep so an operator can fix
+        # the deploy rather than guessing what "could not parse .doc"
+        # means.
+        try:
+            from fielddesk_worker.parsing import ParseError
+            from fielddesk_worker.parsing.doc import parse_doc
+        except ModuleNotFoundError:
+            self.skipTest("worker deps not installed")
+        import shutil
+        from unittest.mock import patch
+
+        with patch.object(shutil, "which", return_value=None):
+            with self.assertRaises(ParseError) as ctx:
+                parse_doc(b"\xd0\xcf\x11\xe0fake-ole-header")
+            msg = str(ctx.exception).lower()
+            self.assertIn("libreoffice", msg)
 
 
 class ParseDocumentRouterTests(unittest.TestCase):
     def test_supported_mime_types_match_what_router_knows(self):
-        # If this set changes, the Go handler's allowedDocumentMimes needs
-        # the same update — the test exists to remind us.
+        # If this set changes, the Go handler's allowedDocumentMimes AND
+        # the frontend's ACCEPT_HINT / EXT_TO_MIME need the same update —
+        # the test exists to remind us. Three sync points, no shared schema.
         self.assertEqual(
             set(SUPPORTED_MIME_TYPES.keys()),
             {
@@ -186,6 +287,8 @@ class ParseDocumentRouterTests(unittest.TestCase):
                 "text/x-markdown",
                 "application/pdf",
                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                "application/msword",
             },
         )
 
