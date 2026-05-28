@@ -5,6 +5,7 @@ import sys
 import types
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -61,6 +62,70 @@ def _load_insert_chunk():
 
 
 insert_chunk = _load_insert_chunk()
+
+
+def _load_embed_service():
+    missing = object()
+    module_names = (
+        "structlog",
+        "fielddesk_worker.config",
+        "fielddesk_worker.db_queries",
+        "fielddesk_worker.storage",
+    )
+    saved_modules = {name: sys.modules.get(name, missing) for name in module_names}
+
+    class _Logger:
+        def info(self, *args, **kwargs):
+            pass
+
+        def warning(self, *args, **kwargs):
+            pass
+
+    structlog_mod = types.ModuleType("structlog")
+    structlog_mod.get_logger = lambda: _Logger()
+
+    config_mod = types.ModuleType("fielddesk_worker.config")
+    config_mod.load_settings = lambda: None
+
+    db_queries_mod = types.ModuleType("fielddesk_worker.db_queries")
+    for name in (
+        "delete_existing_chunks",
+        "get_document_for_update",
+        "insert_chunk",
+        "insert_model_call",
+        "log_model_call_isolated",
+        "update_document_status",
+    ):
+        setattr(db_queries_mod, name, lambda *args, **kwargs: None)
+
+    storage_mod = types.ModuleType("fielddesk_worker.storage")
+    storage_mod.get_object_bytes = lambda key: b""
+
+    sys.modules["structlog"] = structlog_mod
+    sys.modules["fielddesk_worker.config"] = config_mod
+    sys.modules["fielddesk_worker.db_queries"] = db_queries_mod
+    sys.modules["fielddesk_worker.storage"] = storage_mod
+    try:
+        module_path = (
+            Path(__file__).resolve().parents[1]
+            / "fielddesk_worker"
+            / "embeddings"
+            / "service.py"
+        )
+        spec = importlib.util.spec_from_file_location(
+            "_fielddesk_test_embedding_service", module_path
+        )
+        if spec is None or spec.loader is None:
+            raise RuntimeError("could not load embedding service module")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        for name, module in saved_modules.items():
+            if module is missing:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
 
 
 class ContextualRetrievalTests(unittest.TestCase):
@@ -150,6 +215,79 @@ class InsertChunkTests(unittest.TestCase):
         self.assertIn("retrieval_text", cur.sql)
         self.assertEqual(cur.args[3], "Raw citation text.")
         self.assertEqual(cur.args[4], "Document: Warranty\n\nRaw citation text.")
+
+
+class EmbedServiceContextualRetrievalTests(unittest.TestCase):
+    def test_ingest_embeds_and_persists_contextual_retrieval_text(self) -> None:
+        service = _load_embed_service()
+        chunk = Chunk(
+            text="Replace the cartridge before repressurizing the loop.",
+            chunk_index=0,
+            token_count=8,
+            content_hash="hash",
+            heading_path=["Hydraulics", "Pressure Loss"],
+            source_page=12,
+            source_locator={"slide": 4},
+        )
+        captured: dict[str, object] = {}
+
+        class Provider:
+            name = "test-provider"
+            model = "test-model"
+
+            def embed(self, texts):
+                captured["embed_texts"] = texts
+                return [[0.1, 0.2]], service.CallMetrics(
+                    provider=self.name,
+                    model=self.model,
+                    input_tokens=123,
+                    success=True,
+                )
+
+        def fake_insert_chunk(cur, **kwargs):
+            captured["insert_kwargs"] = kwargs
+            return True
+
+        with (
+            patch.object(
+                service,
+                "get_document_for_update",
+                return_value={
+                    "id": "doc-1",
+                    "title": "Field Service SOP",
+                    "object_key": "documents/doc-1.md",
+                    "mime_type": "text/markdown",
+                },
+            ),
+            patch.object(service, "update_document_status"),
+            patch.object(service, "get_object_bytes", return_value=b"# ignored"),
+            patch.object(service, "parse_document", return_value=[]),
+            patch.object(service, "chunk_segments", return_value=[chunk]),
+            patch.object(service, "_make_provider", return_value=Provider()),
+            patch.object(service, "_log_embed_call"),
+            patch.object(service, "delete_existing_chunks"),
+            patch.object(service, "insert_chunk", side_effect=fake_insert_chunk),
+        ):
+            result = service.embed(
+                {
+                    "id": "job-1",
+                    "tenant_id": "tenant-1",
+                    "payload": {"document_id": "doc-1"},
+                },
+                object(),
+            )
+
+        embed_texts = captured["embed_texts"]
+        insert_kwargs = captured["insert_kwargs"]
+
+        self.assertEqual(result["chunks"], 1)
+        self.assertEqual(insert_kwargs["text"], chunk.text)
+        self.assertEqual(embed_texts, [insert_kwargs["retrieval_text"]])
+        self.assertIn("Document: Field Service SOP", embed_texts[0])
+        self.assertIn("Section: Hydraulics > Pressure Loss", embed_texts[0])
+        self.assertIn("Page: 12", embed_texts[0])
+        self.assertIn("Slide: 4", embed_texts[0])
+        self.assertTrue(embed_texts[0].endswith(chunk.text))
 
 
 if __name__ == "__main__":
