@@ -28,6 +28,9 @@ out/
 .idea/
 .DS_Store
 
+# Local portfolio notes
+docs/PORTFOLIO.md
+
 # Docker volumes
 postgres_data/
 minio_data/
