@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
 
-export default function VoiceNotesPage() {
+export default function VoicePage() {
   redirect("/assistant");
 }

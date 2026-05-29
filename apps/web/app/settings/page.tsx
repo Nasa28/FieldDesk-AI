@@ -88,21 +88,6 @@ export default function SettingsPage() {
       </div>
 
       <BudgetsCard tenantId={session?.tenant.id ?? ""} />
-
-      <div className="card">
-        <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>
-          Deferred to a later slice
-        </div>
-        <ul style={{ margin: 0, paddingLeft: 20 }}>
-          <li>Password reset / change-password flow.</li>
-          <li>User invitation flow (today, signup creates a new tenant).</li>
-          <li>
-            <code>max_cost_per_ticket</code> enforcement — accepted by the API,
-            not yet checked at runtime (needs the JSONB denormalization).
-          </li>
-          <li>Provider routing / model preferences.</li>
-        </ul>
-      </div>
     </div>
   );
 }

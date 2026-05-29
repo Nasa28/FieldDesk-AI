@@ -1,14 +1,16 @@
 module github.com/fielddesk-ai/api
 
-go 1.22
+go 1.23
 
 require (
+	github.com/coder/websocket v1.8.14
 	github.com/go-chi/chi/v5 v5.1.0
 	github.com/go-chi/cors v1.2.1
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.7.1
 	github.com/joho/godotenv v1.5.1
 	github.com/minio/minio-go/v7 v7.0.77
+	golang.org/x/crypto v0.27.0
 )
 
 require (
@@ -22,7 +24,6 @@ require (
 	github.com/klauspost/cpuid/v2 v2.2.8 // indirect
 	github.com/minio/md5-simd v1.1.2 // indirect
 	github.com/rs/xid v1.6.0 // indirect
-	golang.org/x/crypto v0.27.0 // indirect
 	golang.org/x/net v0.28.0 // indirect
 	golang.org/x/sync v0.8.0 // indirect
 	golang.org/x/sys v0.25.0 // indirect

@@ -15,6 +15,7 @@ type ctxKey string
 
 const tenantIDKey ctxKey = "tenant_id"
 const userIDKey ctxKey = "user_id"
+const userRoleKey ctxKey = "user_role"
 
 // AuthLookup resolves a hashed session token to the owning tenant + user.
 // Production wires this to database.GetAuthContextBySession; tests pass a
@@ -24,7 +25,7 @@ type AuthLookup interface {
 }
 
 // DatabaseAuthLookup adapts *database.DB to the AuthLookup interface. Kept
-// trivial on purpose — the seam is the interface, not this adapter.
+// trivial on purpose; the interface is what matters, not this adapter.
 type DatabaseAuthLookup struct{ DB *database.DB }
 
 func (d DatabaseAuthLookup) GetAuthContextBySession(
@@ -70,6 +71,7 @@ func authenticateBearer(
 	}
 	ctx := context.WithValue(r.Context(), tenantIDKey, auth.Tenant.ID)
 	ctx = context.WithValue(ctx, userIDKey, auth.User.ID)
+	ctx = context.WithValue(ctx, userRoleKey, auth.User.Role)
 	next.ServeHTTP(w, r.WithContext(ctx))
 }
 
@@ -99,6 +101,32 @@ func UserFromContext(ctx context.Context) (*uuid.UUID, bool) {
 		return nil, false
 	}
 	return &id, true
+}
+
+func UserRoleFromContext(ctx context.Context) (string, bool) {
+	role, ok := ctx.Value(userRoleKey).(string)
+	return role, ok
+}
+
+func RequireRole(allowed ...string) func(http.Handler) http.Handler {
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, role := range allowed {
+		allowedSet[role] = struct{}{}
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			role, ok := UserRoleFromContext(r.Context())
+			if !ok {
+				writeError(w, http.StatusForbidden, "missing_role", "user role is required")
+				return
+			}
+			if _, ok := allowedSet[role]; !ok {
+				writeError(w, http.StatusForbidden, "forbidden", "user role cannot access this resource")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 func bearerToken(header string) string {

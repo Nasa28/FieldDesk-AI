@@ -202,16 +202,6 @@ function BudgetForm({
           />
         </label>
         <label className="field">
-          <span>Max cost per ticket (USD, not yet enforced)</span>
-          <input
-            type="number"
-            min="0"
-            step="0.0001"
-            value={form.max_cost_per_ticket}
-            onChange={(e) => setForm({ ...form, max_cost_per_ticket: e.target.value })}
-          />
-        </label>
-        <label className="field">
           <span>Pause on exceeded</span>
           <select
             value={form.pause_on_exceeded ? "true" : "false"}

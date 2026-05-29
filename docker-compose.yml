@@ -91,6 +91,12 @@ services:
       VOICE_NOTE_MAX_BYTES: ${VOICE_NOTE_MAX_BYTES}
       PRESIGN_TTL_SECONDS: ${PRESIGN_TTL_SECONDS}
       ALLOW_TENANT_HEADER_AUTH: ${ALLOW_TENANT_HEADER_AUTH:-false}
+      # Live voice assistant (Gemini Live). The relay lives in the API process,
+      # so the key + toggles must reach this container, not the worker.
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      VOICE_ENABLED: ${VOICE_ENABLED:-true}
+      VOICE_MODEL: ${VOICE_MODEL:-models/gemini-2.5-flash-native-audio-preview-09-2025}
+      VOICE_NAME: ${VOICE_NAME:-Kore}
     ports:
       # Host port is overridable so the stack can co-exist with other
       # projects already bound to 8080. The container port stays 8080

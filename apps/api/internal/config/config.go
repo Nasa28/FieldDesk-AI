@@ -29,6 +29,14 @@ type Config struct {
 
 	AIWorkerURL string
 
+	// Voice (Gemini Live) — the live voice Q&A feature. VoiceEnabled is
+	// derived in Load(): the whole feature stays off unless a key is present,
+	// so the app boots and all existing tests pass with no Gemini key.
+	GeminiAPIKey string
+	VoiceModel   string
+	VoiceName    string
+	VoiceEnabled bool
+
 	// AllowTenantHeaderAuth controls whether RequireTenant accepts an
 	// X-Tenant-ID header as a fallback when no bearer token is present.
 	// Off by default so a misconfigured production deploy can't silently
@@ -57,8 +65,16 @@ func Load() (*Config, error) {
 		AIJobMaxAttempts:  int32(getenvInt64("AI_JOB_MAX_ATTEMPTS", getenvInt64("WORKER_MAX_RETRIES", 5))),
 		AIWorkerURL:       os.Getenv("AI_WORKER_URL"),
 
+		GeminiAPIKey: os.Getenv("GEMINI_API_KEY"),
+		VoiceModel:   getenv("VOICE_MODEL", "models/gemini-2.5-flash-native-audio-preview-09-2025"),
+		VoiceName:    getenv("VOICE_NAME", "Kore"),
+
 		AllowTenantHeaderAuth: getenvBool("ALLOW_TENANT_HEADER_AUTH", false),
 	}
+
+	// The voice feature is off unless a key is configured. VOICE_ENABLED can
+	// further disable it even when a key is present (e.g. to cap spend).
+	cfg.VoiceEnabled = cfg.GeminiAPIKey != "" && getenvBool("VOICE_ENABLED", true)
 
 	if cfg.DatabaseURL == "" {
 		return nil, errors.New("DATABASE_URL is required")

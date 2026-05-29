@@ -49,16 +49,18 @@ func TestRequireTenantBearerHappyPathPopulatesContext(t *testing.T) {
 		wantTokenHash: database.HashSessionToken(token),
 		auth: database.AuthContext{
 			Tenant:  database.Tenant{ID: tenantID},
-			User:    database.User{ID: userID},
+			User:    database.User{ID: userID, Role: "admin"},
 			Session: database.AuthSession{ExpiresAt: time.Now().Add(time.Hour)},
 		},
 	}
 
 	var gotTenant uuid.UUID
 	var gotUser *uuid.UUID
+	var gotRole string
 	rr := runMiddleware(t, lookup, true, "Bearer "+token, "", func(r *http.Request) {
 		gotTenant, _ = TenantFromContext(r.Context())
 		gotUser, _ = UserFromContext(r.Context())
+		gotRole, _ = UserRoleFromContext(r.Context())
 	})
 
 	if rr.Code != http.StatusOK {
@@ -70,9 +72,49 @@ func TestRequireTenantBearerHappyPathPopulatesContext(t *testing.T) {
 	if gotUser == nil || *gotUser != userID {
 		t.Fatalf("user id missing from context: got %v want %s", gotUser, userID)
 	}
+	if gotRole != "admin" {
+		t.Fatalf("role missing from context: got %q want admin", gotRole)
+	}
 	if !lookup.called {
 		t.Fatal("lookup was not called for a bearer-bearing request")
 	}
+}
+
+func TestRequireRoleAllowsMatchingRole(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/v1/admin/metrics", nil)
+	req = req.WithContext(context.WithValue(req.Context(), userRoleKey, "admin"))
+	rr := httptest.NewRecorder()
+
+	RequireRole("admin")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 for matching role, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestRequireRoleRejectsWrongRole(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/v1/admin/metrics", nil)
+	req = req.WithContext(context.WithValue(req.Context(), userRoleKey, "member"))
+	rr := httptest.NewRecorder()
+
+	RequireRole("admin")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})).ServeHTTP(rr, req)
+
+	assertErrorBody(t, rr, http.StatusForbidden, "forbidden")
+}
+
+func TestRequireRoleRejectsMissingRole(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/v1/admin/metrics", nil)
+	rr := httptest.NewRecorder()
+
+	RequireRole("admin")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})).ServeHTTP(rr, req)
+
+	assertErrorBody(t, rr, http.StatusForbidden, "missing_role")
 }
 
 func TestRequireTenantBearerInvalidTokenIs401(t *testing.T) {
