@@ -118,7 +118,7 @@ fielddesk-ai/
 |   |-- api/          # Go HTTP API
 |   |-- worker/       # Python AI worker
 |   `-- web/          # Next.js dashboard
-|-- docs/             # Product, architecture, workflows, evals, portfolio notes
+|-- docs/             # Product, architecture, workflows, evals, and technical specs
 |-- infra/
 |   |-- docker/       # Service Dockerfiles
 |   |-- migrations/   # Goose SQL migrations
@@ -231,7 +231,6 @@ pytest
 - [AI Workflows](docs/AI_WORKFLOWS.md)
 - [Evals](docs/EVALS.md)
 - [Technical Spec](docs/SPEC.md)
-- [Portfolio Notes](docs/PORTFOLIO.md)
 
 ## Project Status
 
